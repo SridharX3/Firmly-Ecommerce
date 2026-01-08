@@ -1,0 +1,45 @@
+{
+  "name": "products-worker",
+  "main": "src/index.js",
+  "compatibility_date": "2024-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "vars": {
+    "AUTH_WORKER_URL": "https://auth-worker.sridhar-89c.workers.dev"
+  },
+
+  "observability": {
+    "traces": {
+      "enabled": true,
+      "destinations": ["auth-worker-cloudflare"]
+    }
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "products-db",
+      "database_id": "888aa4e6-63a7-4c09-83b2-ef85cbaa1131"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "VIEWER_COUNTER",
+        "class_name": "ViewerCounter"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "delete-viewcounter",
+      "deleted_classes": ["ViewCounter"]
+    },
+    {
+      "tag": "add-viewer-counter",
+      "new_sqlite_classes": ["ViewerCounter"]
+    }
+  ]
+}

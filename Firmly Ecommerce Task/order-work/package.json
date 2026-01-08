@@ -1,0 +1,20 @@
+{
+  "name": "order-worker",
+  "version": "1.0.0",
+  "description": "Production-grade e-commerce checkout, payment, and order system using Cloudflare Workers",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "db:migrate": "wrangler d1 migrations apply ecommerce-db"
+  },
+  "dependencies": {
+    "itty-router": "^4.2.2",
+    "joi": "^17.13.3"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.4"
+  }
+}

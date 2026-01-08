@@ -1,0 +1,89 @@
+CREATE TABLE checkout_sessions (
+  id TEXT PRIMARY KEY,                     
+  user_id INTEGER NOT NULL,                 
+  cart_id INTEGER NOT NULL,                
+
+  cart_snapshot TEXT NOT NULL,              
+
+  subtotal INTEGER NOT NULL,               
+  tax INTEGER NOT NULL,
+  shipping INTEGER NOT NULL,
+  total INTEGER NOT NULL,
+
+  status TEXT NOT NULL DEFAULT 'CREATED',   
+
+  shipping_address TEXT,                    
+  delivery_type TEXT,                       
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
+CREATE TABLE IF NOT EXISTS payments (
+  id TEXT PRIMARY KEY,               
+  user_id INTEGER NOT NULL,
+  checkout_id TEXT NOT NULL,        
+
+  provider TEXT NOT NULL CHECK (
+    provider IN ('PAYPAL')
+  ),
+
+  provider_order_id TEXT,            
+  amount INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'INR',
+
+  status TEXT NOT NULL CHECK (
+    status IN (
+      'CREATED',
+      'APPROVED',
+      'CAPTURED',
+      'FAILED',
+      'CANCELLED',
+      'EXPIRED'
+    )
+  ),
+
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (checkout_id) REFERENCES checkout_sessions(id)
+);
+
+
+
+CREATE TABLE orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  user_id INTEGER NOT NULL,
+
+  status TEXT NOT NULL CHECK (
+    status IN (
+      'created',
+      'payment_pending',
+      'paid',
+      'payment_failed',
+      'cancelled',
+      'fulfilled'
+    )
+  ),
+
+  ordered_items TEXT NOT NULL,
+  total_amount INTEGER NOT NULL,
+
+  currency TEXT NOT NULL DEFAULT 'INR',
+
+  shipping_address TEXT NOT NULL,
+  billing_address TEXT NOT NULL,
+  delivery_mode TEXT NOT NULL,
+
+  payment_provider TEXT CHECK (
+    payment_provider IN ('paypal')
+  ),
+
+  payment_reference TEXT,
+
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);

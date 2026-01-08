@@ -1,0 +1,4 @@
+Your New Ingest API Key
+This is your new ingest key! Copy it now to a secure location. You will not be able to view the key again later.
+Key name: auth-worker-cloudflare
+hcaik_01ke6nq2fb3bh48x0nkvszexn7ywrfd9sm2scr3wrahgde77rh7qn9vv9h

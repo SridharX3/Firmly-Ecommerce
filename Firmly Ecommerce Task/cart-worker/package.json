@@ -1,0 +1,10 @@
+{
+  "name": "cart-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "itty-router": "^4.2.2",
+    "joi": "^17.13.3"
+  }
+}

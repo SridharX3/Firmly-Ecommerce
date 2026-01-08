@@ -1,0 +1,43 @@
+{
+  "name": "order-worker",
+  "main": "src/index.js",
+  "compatibility_date": "2024-01-01",
+
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+
+  "observability": {
+    "traces": {
+      "enabled": true,
+      "destinations": ["auth-worker-cloudflare"]
+    }
+  },
+  
+  "workers_dev": true,
+  "preview_urls": true,
+
+  "kv_namespaces": [
+    {
+      "binding": "SESSION_KV",
+      "id": "dda2669fbf5b4fba8a93499eba80eb75"
+    },
+    {
+      "binding": "CART_KV",
+      "id": "ad08dfd038f3495dba5c17b2cc9bf884"
+    }
+  ],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ecommerce-db",
+      "database_id": "888aa4e6-63a7-4c09-83b2-ef85cbaa1131"
+    }
+  ],
+
+  "vars": {
+    "PAYPAL_API": "https://api-m.sandbox.paypal.com"
+  }
+
+}

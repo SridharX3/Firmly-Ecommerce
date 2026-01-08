@@ -1,0 +1,20 @@
+{
+  "name": "auth-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.208.0",
+    "@opentelemetry/resources": "^2.2.0",
+    "@opentelemetry/sdk-trace-base": "^2.2.0",
+    "@opentelemetry/semantic-conventions": "^1.38.0",
+    "itty-router": "^4.2.2",
+    "joi": "^17.13.3"
+  }
+}
