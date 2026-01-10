@@ -97,7 +97,7 @@ const createSessionStub = sinon.stub(sessionService, 'createSession').resolves(s
       expect(response.status).to.equal(200);
       expect(body.email).to.equal(user.email);
       expect(response.headers.get('Set-Cookie')).to.equal(
-        setSessionCookie(sessionId)
+cookie.setSessionCookie(sessionId)
       );
       expect(loginStub.calledOnce).to.be.true;
       expect(createSessionStub.calledOnce).to.be.true;

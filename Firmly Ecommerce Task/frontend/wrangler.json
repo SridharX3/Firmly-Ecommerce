@@ -1,0 +1,7 @@
+{
+  "name": "firmly-ecommerce-frontend",
+  "pages_build_output_dir": "build",
+  "vars": {
+    "PUBLIC_PAYPAL_CLIENT_ID": "AfAwEGXFWzWFFqd9AvCdIIdKg0kUtrdfDWPqCgZd2nKqkQpMw--2KWkCBW7djaCSHdll_wHK25Zh8mWu"
+  }
+}
