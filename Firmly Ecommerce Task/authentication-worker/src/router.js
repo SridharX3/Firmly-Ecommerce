@@ -15,16 +15,10 @@ const router = Router();
 ====================== */
 router.post('/auth/register', async (req, env, ctx) => {
   try {
-    if (!env.DB) {
-      throw new Error('Database configuration is missing');
-    }
-
     let body;
-    try {
-      body = await req.json();
-    } catch {
-      throw new Error('Invalid JSON payload');
-    }
+    
+    body = await req.json();
+
     const authKey = req.headers.get('auth-key');
 
     const user = await authService.register(
@@ -66,16 +60,9 @@ router.post('/auth/register', async (req, env, ctx) => {
 ====================== */
 router.post('/auth/login', async (req, env, ctx) => {
   try {
-    if (!env.DB) {
-      throw new Error('Database configuration is missing');
-    }
-
     let body;
-    try {
-      body = await req.json();
-    } catch {
-      throw new Error('Invalid JSON payload');
-    }
+    
+    body = await req.json();
 
     const user = await authService.login(env.DB, body, ctx);
 
@@ -130,7 +117,6 @@ router.post('/auth/logout', async (req, env, ctx) => {
     );
   }
 });
-
 
 /* ======================
    CORS PREFLIGHT

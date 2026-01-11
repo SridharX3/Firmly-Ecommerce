@@ -1,6 +1,6 @@
 import { Router } from 'itty-router';
-import { json } from '../response';
-import { requireUser, validateQuantity } from '../utils/validate';
+import { json } from '../response.js';
+import { requireUser, validateQuantity } from '../utils/validate.js';
 
 const router = Router();
 
@@ -230,10 +230,6 @@ router.delete('/cart/items/:productId', async (req) => {
     const userId = await requireUser(req, req.env);
     const cart = await getActiveCart(req.env, userId);
 
-    if (!cart) {
-      return json({ message: 'Item removed' });
-    }
-
     await req.env.DB.prepare(`
       UPDATE cart_items
       SET status = 'removed'
@@ -259,10 +255,6 @@ router.delete('/cart', async (req) => {
   try {
     const userId = await requireUser(req, req.env);
     const cart = await getActiveCart(req.env, userId);
-
-    if (!cart) {
-      return json({ message: 'Cart cleared' });
-    }
 
     await req.env.DB.batch([
       req.env.DB.prepare(`

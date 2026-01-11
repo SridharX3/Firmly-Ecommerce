@@ -249,15 +249,17 @@ export async function update(db, id, data, ctx) {
     // Build Inventory Update Statement
     if (inventory) {
       const invEntries = Object.entries(inventory);
-      const invFields = invEntries.map(([key]) => `${key} = ?`);
-      const invValues = invEntries.map(([, value]) => value);
-      statements.push(
-        db.prepare(`
-          UPDATE product_inventory 
-          SET ${invFields.join(', ')} 
-          WHERE product_id = ?
-        `).bind(...invValues, id)
-      );
+      if (invEntries.length > 0) {
+        const invFields = invEntries.map(([key]) => `${key} = ?`);
+        const invValues = invEntries.map(([, value]) => value);
+        statements.push(
+          db.prepare(`
+            UPDATE product_inventory 
+            SET ${invFields.join(', ')} 
+            WHERE product_id = ?
+          `).bind(...invValues, id)
+        );
+      }
     }
 
     if (statements.length === 0) return getById(db, id, { role: 'admin' }, ctx);

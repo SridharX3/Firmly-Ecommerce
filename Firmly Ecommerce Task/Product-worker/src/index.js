@@ -39,7 +39,7 @@ async function getAuthUser(request, env) {
         .first();
 
       if (user?.role) {
-        session.role = user.role.trim();
+        session.role = user.role.trim().toLowerCase();
         return session;
       }
     }
@@ -63,7 +63,7 @@ async function safeParseJson(request) {
 ================================ */
 router.get('/products', async (request, env, ctx) => {
   const user = await getAuthUser(request, env);
-  const page = request.headers.get('X-Page');
+  const page = request.headers.get('X-Page') ?? undefined;
   const products = await service.getAll(env.DB, { page, role: user?.role }, ctx);
 
   return json(products, 200, request);

@@ -1,13 +1,34 @@
-import { expect } from 'chai';
-import sinon from 'sinon';
-import router from '../src/router.js';
-import authService from '../src/services/auth.service.js';
-import sessionService from '../src/services/session.service.js';
-import cookie from '../src/utils/cookie.js';
+import { jest, expect, describe, it, beforeEach, afterEach } from '@jest/globals';
+
+jest.unstable_mockModule('../src/services/auth.service.js', () => ({
+  register: jest.fn(),
+  login: jest.fn(),
+}));
+
+jest.unstable_mockModule('../src/services/session.service.js', () => ({
+  createSession: jest.fn(),
+  deleteSession: jest.fn(),
+}));
+
+jest.unstable_mockModule('../src/utils/cookie.js', () => ({
+  setSessionCookie: jest.fn(),
+  clearSessionCookie: jest.fn(),
+  getCookie: jest.fn(),
+}));
+
+const authService = await import('../src/services/auth.service.js');
+const sessionService = await import('../src/services/session.service.js');
+const cookie = await import('../src/utils/cookie.js');
+const { default: router } = await import('../src/router.js');
 
 describe('Router', () => {
+  beforeEach(() => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
   afterEach(() => {
-    sinon.restore();
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
   });
 
   describe('POST /auth/register', () => {
@@ -16,7 +37,7 @@ describe('Router', () => {
         method: 'POST',
         url: 'https://test.com/auth/register',
         headers: {
-          'content-type': 'application/json',
+          get: (key) => key.toLowerCase() === 'content-type' ? 'application/json' : null,
         },
         json: async () => ({
           email: 'test@example.com',
@@ -29,18 +50,18 @@ describe('Router', () => {
       const user = { id: 1, email: 'test@example.com' };
       const sessionId = 'some-session-id';
 
-const createSessionStub = sinon.stub(sessionService, 'createSession').resolves(sessionId);
+      authService.register.mockResolvedValue(user);
+      sessionService.createSession.mockResolvedValue(sessionId);
+      cookie.setSessionCookie.mockReturnValue(`session_id=${sessionId}`);
 
       const response = await router.handle(request, env, ctx);
       const body = await response.json();
 
-      expect(response.status).to.equal(201);
-      expect(body.email).to.equal(user.email);
-      expect(response.headers.get('Set-Cookie')).to.equal(
-        cookie.setSessionCookie(sessionId)
-      );
-      expect(registerStub.calledOnce).to.be.true;
-      expect(createSessionStub.calledOnce).to.be.true;
+      expect(response.status).toBe(201);
+      expect(body.email).toBe(user.email);
+      expect(response.headers.get('Set-Cookie')).toBe(`session_id=${sessionId}`);
+      expect(authService.register).toHaveBeenCalledTimes(1);
+      expect(sessionService.createSession).toHaveBeenCalledTimes(1);
     });
 
     it('should handle registration failure', async () => {
@@ -48,7 +69,7 @@ const createSessionStub = sinon.stub(sessionService, 'createSession').resolves(s
         method: 'POST',
         url: 'https://test.com/auth/register',
         headers: {
-          'content-type': 'application/json',
+          get: (key) => key.toLowerCase() === 'content-type' ? 'application/json' : null,
         },
         json: async () => ({
           email: 'test@example.com',
@@ -58,14 +79,14 @@ const createSessionStub = sinon.stub(sessionService, 'createSession').resolves(s
       const env = { DB: {} };
       const ctx = {};
 
-      const registerStub = sinon.stub(authService, 'register').throws(new Error('Registration failed'));
+      authService.register.mockImplementation(() => { throw new Error('Registration failed'); });
 
       const response = await router.handle(request, env, ctx);
       const body = await response.json();
 
-      expect(response.status).to.equal(400);
-      expect(body.error).to.equal('Registration failed');
-      expect(registerStub.calledOnce).to.be.true;
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('Registration failed');
+      expect(authService.register).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -75,7 +96,7 @@ const createSessionStub = sinon.stub(sessionService, 'createSession').resolves(s
         method: 'POST',
         url: 'https://test.com/auth/login',
         headers: {
-          'content-type': 'application/json',
+          get: (key) => key.toLowerCase() === 'content-type' ? 'application/json' : null,
         },
         json: async () => ({
           email: 'test@example.com',
@@ -88,19 +109,18 @@ const createSessionStub = sinon.stub(sessionService, 'createSession').resolves(s
       const user = { id: 1, email: 'test@example.com' };
       const sessionId = 'some-session-id';
 
-      const loginStub = sinon.stub(authService, 'login').resolves(user);
-      const createSessionStub = sinon.stub(sessionService, 'createSession').resolves(sessionId);
+      authService.login.mockResolvedValue(user);
+      sessionService.createSession.mockResolvedValue(sessionId);
+      cookie.setSessionCookie.mockReturnValue(`session_id=${sessionId}`);
 
       const response = await router.handle(request, env, ctx);
       const body = await response.json();
 
-      expect(response.status).to.equal(200);
-      expect(body.email).to.equal(user.email);
-      expect(response.headers.get('Set-Cookie')).to.equal(
-cookie.setSessionCookie(sessionId)
-      );
-      expect(loginStub.calledOnce).to.be.true;
-      expect(createSessionStub.calledOnce).to.be.true;
+      expect(response.status).toBe(200);
+      expect(body.email).toBe(user.email);
+      expect(response.headers.get('Set-Cookie')).toBe(`session_id=${sessionId}`);
+      expect(authService.login).toHaveBeenCalledTimes(1);
+      expect(sessionService.createSession).toHaveBeenCalledTimes(1);
     });
 
     it('should handle login failure', async () => {
@@ -108,7 +128,7 @@ cookie.setSessionCookie(sessionId)
         method: 'POST',
         url: 'https://test.com/auth/login',
         headers: {
-          'content-type': 'application/json',
+          get: (key) => key.toLowerCase() === 'content-type' ? 'application/json' : null,
         },
         json: async () => ({
           email: 'test@example.com',
@@ -118,14 +138,14 @@ cookie.setSessionCookie(sessionId)
       const env = { DB: {} };
       const ctx = {};
 
-      const loginStub = sinon.replace(authService, 'login', sinon.fake.throws(new Error('Login failed')));
+      authService.login.mockImplementation(() => { throw new Error('Login failed'); });
 
       const response = await router.handle(request, env, ctx);
       const body = await response.json();
 
-      expect(response.status).to.equal(401);
-      expect(body.error).to.equal('Login failed');
-      expect(loginStub.calledOnce).to.be.true;
+      expect(response.status).toBe(401);
+      expect(body.error).toBe('Login failed');
+      expect(authService.login).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -135,23 +155,53 @@ cookie.setSessionCookie(sessionId)
         method: 'POST',
         url: 'https://test.com/auth/logout',
         headers: {
-          cookie: 'session_id=some-session-id',
+          get: (key) => key.toLowerCase() === 'cookie' ? 'session_id=some-session-id' : null,
         },
       };
       const env = { DB: {} };
       const ctx = {};
 
-      const deleteSessionStub = sinon.replace(sessionService, 'deleteSession', sinon.fake.resolves(undefined));
+      cookie.getCookie.mockReturnValue('some-session-id');
+      sessionService.deleteSession.mockResolvedValue(undefined);
+      cookie.clearSessionCookie.mockReturnValue('session_id=; Max-Age=0; Path=/');
 
       const response = await router.handle(request, env, ctx);
       const body = await response.json();
 
-      expect(response.status).to.equal(200);
-      expect(body.success).to.be.true;
-      expect(response.headers.get('Set-Cookie')).to.equal(
-        clearSessionCookie()
-      );
-      expect(deleteSessionStub.calledOnce).to.be.true;
+      expect(response.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(response.headers.get('Set-Cookie')).toBe('session_id=; Max-Age=0; Path=/');
+      expect(sessionService.deleteSession).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('CORS Preflight', () => {
+    it('should handle CORS preflight requests', async () => {
+      const request = {
+        method: 'OPTIONS',
+        url: 'https://test.com/some/path',
+        headers: {
+          get: (key) => {
+            if (key === 'Origin') return 'https://example.com';
+            if (key === 'Access-Control-Request-Method') return 'POST';
+            if (key === 'Access-Control-Request-Headers') return 'Content-Type, Authorization';
+            return null;
+          },
+          'Origin': 'https://example.com',
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers': 'Content-Type, Authorization',
+        },
+      };
+      const env = {};
+      const ctx = {};
+
+      const response = await router.handle(request, env, ctx);
+
+      expect(response.status).toBe(204);
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PATCH, DELETE, OPTIONS');
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type, Authorization');
+      expect(response.headers.get('Access-Control-Allow-Credentials')).toBe('true');
     });
   });
 
@@ -160,6 +210,9 @@ cookie.setSessionCookie(sessionId)
       const request = {
         method: 'GET',
         url: 'https://test.com/unknown',
+        headers: {
+          get: () => null
+        }
       };
       const env = {};
       const ctx = {};
@@ -167,8 +220,8 @@ cookie.setSessionCookie(sessionId)
       const response = await router.handle(request, env, ctx);
       const body = await response.json();
 
-      expect(response.status).to.equal(404);
-      expect(body.error).to.equal('Route not found');
+      expect(response.status).toBe(404);
+      expect(body.error).toBe('Route not found');
     });
   });
 });

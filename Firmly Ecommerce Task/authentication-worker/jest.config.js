@@ -5,4 +5,5 @@ export default {
   transform: {},
   moduleFileExtensions: ['js', 'json', 'node'],
   testMatch: ['**/__tests__/**/*.js?(x)', '**/?(*.)+(spec|test).js?(x)'],
+  coverageReporters: ['text', 'html'],
 };

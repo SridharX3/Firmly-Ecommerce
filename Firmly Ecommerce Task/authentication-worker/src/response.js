@@ -4,16 +4,12 @@ export function json(body, status = 200, request, extraHeaders = {}) {
   // ✅ GUARANTEE SERIALIZABLE JSON
   let payload;
 
-  try {
-    payload =
-      body instanceof Error
-        ? { error: body.message }
-        : typeof body === 'object'
-        ? body
-        : { data: body };
-  } catch {
-    payload = { error: 'Invalid response payload' };
-  }
+  payload =
+    body instanceof Error
+      ? { error: body.message }
+      : typeof body === 'object'
+      ? body
+      : { data: body };
 
   return new Response(JSON.stringify(payload), {
     status,

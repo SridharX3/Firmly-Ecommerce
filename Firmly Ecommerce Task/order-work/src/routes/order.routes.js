@@ -1,5 +1,5 @@
-import { json } from '../response';
-import { withSpan, setAttributes } from '../observability/otel';
+import { json } from '../response.js';
+import { withSpan, setAttributes } from '../observability/otel.js';
 
 export async function getAllOrders(req, env, ctx) {
   return withSpan(ctx, 'order.get_all', { 'user.id': req.userId }, async (span) => {

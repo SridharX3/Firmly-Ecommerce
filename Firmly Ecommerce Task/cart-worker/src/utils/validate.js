@@ -1,4 +1,4 @@
-import { getCookie } from './cookie';
+import { getCookie } from './cookie.js';
 
 export async function requireUser(req, env) {
   const sessionId = getCookie(req, 'session_id');

@@ -1,12 +1,12 @@
-import { json } from '../response';
+import { json } from '../response.js';
 import {
   createPayPalOrder,
   capturePayPalOrder
-} from '../services/payment.service';
-import { getCookie } from '../utils/cookie';
-import { safeJson } from '../utils/safeJ';
-import { createOrderTransaction } from '../services/order.service';
-import { withSpan, setAttributes } from '../observability/otel';
+} from '../services/payment.service.js';
+import { getCookie } from '../utils/cookie.js';
+import { safeJson } from '../utils/safeJ.js';
+import { createOrderTransaction } from '../services/order.service.js';
+import { withSpan, setAttributes } from '../observability/otel.js';
 
 /**
  * POST /payments/paypal/create

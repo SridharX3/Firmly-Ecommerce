@@ -2,7 +2,13 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { attachSession } from '../../src/middleware/session.js';
-import otel from '../../src/observability/otel.js';
+import { jest } from '@jest/globals';
+
+// Mock the otel module
+jest.mock('../../src/observability/otel.js', () => ({
+  withSpan: jest.fn().callsFake((ctx, name, options, fn) => fn(options)),
+}));
+import * as otel from '../../src/observability/otel.js';
 
 describe('Session Middleware', () => {
   let request;
@@ -24,7 +30,6 @@ describe('Session Middleware', () => {
       },
     };
     ctx = {};
-    sinon.stub(otel, 'withSpan').callsFake((ctx, name, options, fn) => fn(options));
   });
 
   afterEach(() => {
