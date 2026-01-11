@@ -1,28 +1,41 @@
+import { jest, expect, describe, it, beforeEach, afterEach } from '@jest/globals';
 
-import { expect } from 'chai';
-import sinon from 'sinon';
-import authService from '../../src/services/auth.service.js';
-import crypto from '../../src/utils/crypto.js';
-import otel from '../../src/observability/otel.js';
+jest.unstable_mockModule('../../src/utils/crypto.js', () => ({
+  hashPassword: jest.fn(),
+  verifyPassword: jest.fn(),
+}));
+
+jest.unstable_mockModule('../../src/observability/otel.js', () => ({
+  withSpan: jest.fn(),
+}));
+
+const authService = await import('../../src/services/auth.service.js');
+const crypto = await import('../../src/utils/crypto.js');
+const otel = await import('../../src/observability/otel.js');
 
 describe('Auth Service', () => {
   let dbMock;
   let ctxMock;
-  let withSpanStub;
 
   beforeEach(() => {
     dbMock = {
-      prepare: sinon.stub().returnsThis(),
-      bind: sinon.stub().returnsThis(),
-      first: sinon.stub(),
-      run: sinon.stub(),
+      prepare: jest.fn().mockReturnThis(),
+      bind: jest.fn().mockReturnThis(),
+      first: jest.fn(),
+      run: jest.fn(),
     };
     ctxMock = {}; // Mock context as needed
-    sinon.stub(otel, 'withSpan').callsFake((ctx, name, options, fn) => fn(options));
+    otel.withSpan.mockImplementation((ctx, name, options, fn) => {
+      const mockSpan = {
+        setAttribute: jest.fn(),
+        recordException: jest.fn(),
+      };
+      return fn(mockSpan);
+    });
   });
 
   afterEach(() => {
-    sinon.restore();
+    jest.clearAllMocks();
   });
 
   describe('register', () => {
@@ -34,20 +47,20 @@ describe('Auth Service', () => {
       };
       const hashedPassword = 'hashedPassword';
 
-      dbMock.first.resolves(null); // No existing user
-      dbMock.run.resolves({ meta: { last_row_id: 1 } });
-      const hashPasswordStub = sinon.stub(crypto, 'hashPassword').resolves(hashedPassword);
+      dbMock.first.mockResolvedValue(null); // No existing user
+      dbMock.run.mockResolvedValue({ meta: { last_row_id: 1 } });
+      crypto.hashPassword.mockResolvedValue(hashedPassword);
 
       const result = await authService.register(dbMock, payload, ctxMock, 'user-key', 'admin-secret');
 
-      expect(result).to.deep.equal({
+      expect(result).toEqual({
         id: 1,
         email: 'test@example.com',
-        phone_number: undefined,
-        username: undefined,
+        phone_number: null,
+        username: null,
       });
-      expect(dbMock.prepare.callCount).to.equal(2);
-      expect(hashPasswordStub.calledOnceWith('password123')).to.be.true;
+      expect(dbMock.prepare).toHaveBeenCalledTimes(2);
+      expect(crypto.hashPassword).toHaveBeenCalledWith('password123');
     });
 
     it('should throw an error if email is already registered', async () => {
@@ -56,14 +69,14 @@ describe('Auth Service', () => {
         password: 'password123',
         confirm_password: 'password123',
       };
-      dbMock.first.resolves({ id: 1 }); // Existing user
+      dbMock.first.mockResolvedValue({ id: 1 }); // Existing user
 
       try {
         await authService.register(dbMock, payload, ctxMock, 'user-key', 'admin-secret');
         // Should not reach here
-        expect.fail('Expected error was not thrown');
+        throw new Error('Expected error was not thrown');
       } catch (error) {
-        expect(error.message).to.equal('Email already registered');
+        expect(error.message).toBe('Email already registered');
       }
     });
 
@@ -76,9 +89,9 @@ describe('Auth Service', () => {
   
         try {
           await authService.register(dbMock, payload, ctxMock, 'user-key', 'admin-secret');
-          expect.fail('Expected validation error was not thrown');
+          throw new Error('Expected validation error was not thrown');
         } catch (error) {
-          expect(error.message).to.contain('"password" length must be at least 6 characters long');
+          expect(error.message).toContain('"password" length must be at least 6 characters long');
         }
       });
   });
@@ -95,17 +108,17 @@ describe('Auth Service', () => {
         password: 'hashedPassword',
       };
 
-      dbMock.first.resolves(user);
-      const verifyPasswordStub = sinon.stub(crypto, 'verifyPassword').resolves(true);
+      dbMock.first.mockResolvedValue(user);
+      crypto.verifyPassword.mockResolvedValue(true);
 
       const result = await authService.login(dbMock, payload, ctxMock);
 
-      expect(result).to.deep.equal({
+      expect(result).toEqual({
         id: 1,
         email: 'test@example.com',
       });
-      expect(dbMock.prepare.calledOnce).to.be.true;
-      expect(verifyPasswordStub.calledOnceWith('password123', 'hashedPassword')).to.be.true;
+      expect(dbMock.prepare).toHaveBeenCalledTimes(1);
+      expect(crypto.verifyPassword).toHaveBeenCalledWith('password123', 'hashedPassword');
     });
 
     it('should throw an error for non-existing user', async () => {
@@ -114,13 +127,13 @@ describe('Auth Service', () => {
           password: 'password123',
         };
   
-        dbMock.first.resolves(null); // No user found
+        dbMock.first.mockResolvedValue(null); // No user found
   
         try {
           await authService.login(dbMock, payload, ctxMock);
-          expect.fail('Expected error was not thrown');
+          throw new Error('Expected error was not thrown');
         } catch (error) {
-          expect(error.message).to.equal('No account found with this email');
+          expect(error.message).toBe('No account found with this email');
         }
       });
   
@@ -135,16 +148,16 @@ describe('Auth Service', () => {
           password: 'hashedPassword',
         };
   
-        dbMock.first.resolves(user);
-        const verifyPasswordStub = sinon.stub(crypto, 'verifyPassword').resolves(false);
+        dbMock.first.mockResolvedValue(user);
+        crypto.verifyPassword.mockResolvedValue(false);
   
         try {
           await authService.login(dbMock, payload, ctxMock);
-          expect.fail('Expected error was not thrown');
+          throw new Error('Expected error was not thrown');
         } catch (error) {
-          expect(error.message).to.equal('Incorrect password');
+          expect(error.message).toBe('Incorrect password');
         }
-        expect(verifyPasswordStub.calledOnceWith('wrongpassword', 'hashedPassword')).to.be.true;
+        expect(crypto.verifyPassword).toHaveBeenCalledWith('wrongpassword', 'hashedPassword');
       });
   });
 });

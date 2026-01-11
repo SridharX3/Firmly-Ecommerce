@@ -3,10 +3,17 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "c8 --reporter=html --reporter=text mocha test/**/*.test.js"
   },
   "dependencies": {
     "itty-router": "^4.2.2",
     "joi": "^17.13.3"
+  },
+  "devDependencies": {
+    "c8": "^8.0.1",
+    "chai": "^4.3.7",
+    "mocha": "^10.2.0",
+    "sinon": "^15.0.1"
   }
 }

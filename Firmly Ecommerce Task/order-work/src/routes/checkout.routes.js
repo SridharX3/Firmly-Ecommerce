@@ -1,8 +1,8 @@
-import { json } from '../response';
-import { safeJson } from '../utils/safeJ';
-import { getCookie } from '../utils/cookie';
+import { json } from '../response.js';
+import { safeJson } from '../utils/safeJ.js';
+import { getCookie } from '../utils/cookie.js';
 import Joi from 'joi';
-import { withSpan, setAttributes } from '../observability/otel';
+import { withSpan, setAttributes } from '../observability/otel.js';
 
 const DELIVERY_PRICING = {
   NORMAL: { cost: 50, eta_days: 5 },

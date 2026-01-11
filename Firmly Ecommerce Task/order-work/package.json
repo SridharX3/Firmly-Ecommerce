@@ -8,13 +8,32 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
-    "db:migrate": "wrangler d1 migrations apply ecommerce-db"
+    "db:migrate": "wrangler d1 migrations apply ecommerce-db",
+    "test": "c8 mocha 'test/**/*.test.js'"
   },
   "dependencies": {
     "itty-router": "^4.2.2",
     "joi": "^17.13.3"
   },
   "devDependencies": {
+    "c8": "^10.1.2",
+    "chai": "^5.1.0",
+    "esmock": "^2.6.3",
+    "mocha": "^10.4.0",
+    "sinon": "^17.0.1",
     "wrangler": "^4.45.4"
+  },
+  "c8": {
+    "all": true,
+    "include": [
+      "src/**/*.js"
+    ],
+    "exclude": [
+      "test/**"
+    ],
+    "reporter": [
+      "text",
+      "html"
+    ]
   }
 }

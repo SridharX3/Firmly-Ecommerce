@@ -1,47 +1,53 @@
+import { jest, expect, describe, it, beforeEach, afterEach } from '@jest/globals';
 
-import { expect } from 'chai';
-import sinon from 'sinon';
-import sessionService from '../../src/services/session.service.js';
-import crypto from '../../src/utils/crypto.js';
-import otel from '../../src/observability/otel.js';
+jest.unstable_mockModule('../../src/utils/crypto.js', () => ({
+  generateUUID: jest.fn(),
+}));
+
+jest.unstable_mockModule('../../src/observability/otel.js', () => ({
+  withSpan: jest.fn(),
+}));
+
+const sessionService = await import('../../src/services/session.service.js');
+const crypto = await import('../../src/utils/crypto.js');
+const otel = await import('../../src/observability/otel.js');
 
 describe('Session Service', () => {
   let envMock;
   let ctxMock;
-  let withSpanStub;
 
   beforeEach(() => {
     envMock = {
       SESSION_KV: {
-        put: sinon.stub(),
-        get: sinon.stub(),
-        delete: sinon.stub(),
+        put: jest.fn(),
+        get: jest.fn(),
+        delete: jest.fn(),
       },
       SESSION_TTL: '3600',
     };
     ctxMock = {}; // Mock context as needed
-    sinon.stub(otel, 'withSpan').callsFake((ctx, name, options, fn) => fn(options));
+    otel.withSpan.mockImplementation((ctx, name, options, fn) => fn(options));
   });
 
   afterEach(() => {
-    sinon.restore();
+    jest.clearAllMocks();
   });
 
   describe('createSession', () => {
     it('should create a session successfully', async () => {
       const userId = 1;
       const uuid = 'test-session-id';
-      const generateUUIDStub = sinon.stub(crypto, 'generateUUID').returns(uuid);
+      crypto.generateUUID.mockReturnValue(uuid);
 
       const sessionId = await sessionService.createSession(envMock, userId, ctxMock);
 
-      expect(sessionId).to.equal(uuid);
-      expect(envMock.SESSION_KV.put.calledOnceWith(
+      expect(sessionId).toBe(uuid);
+      expect(envMock.SESSION_KV.put).toHaveBeenCalledWith(
         uuid,
         JSON.stringify({ user_id: userId }),
         { expirationTtl: 3600 }
-      )).to.be.true;
-      expect(generateUUIDStub.calledOnce).to.be.true;
+      );
+      expect(crypto.generateUUID).toHaveBeenCalledTimes(1);
     });
 
     it('should throw an error if session storage is unavailable', async () => {
@@ -50,9 +56,9 @@ describe('Session Service', () => {
 
       try {
         await sessionService.createSession(envMock, userId, ctxMock);
-        expect.fail('Expected error was not thrown');
+        throw new Error('Expected error was not thrown');
       } catch (error) {
-        expect(error.message).to.equal('Session storage is currently unavailable');
+        expect(error.message).toBe('Session storage is currently unavailable');
       }
     });
   });
@@ -60,37 +66,37 @@ describe('Session Service', () => {
   describe('getSession', () => {
     it('should return null if no session id is provided', async () => {
       const session = await sessionService.getSession(envMock, null, ctxMock);
-      expect(session).to.be.null;
+      expect(session).toBeNull();
     });
 
     it('should return session data for a valid session id', async () => {
       const sessionId = 'test-session-id';
       const sessionData = { user_id: 1 };
-      envMock.SESSION_KV.get.withArgs(sessionId, 'json').resolves(sessionData);
+      envMock.SESSION_KV.get.mockResolvedValue(sessionData);
 
       const session = await sessionService.getSession(envMock, sessionId, ctxMock);
 
-      expect(session).to.deep.equal(sessionData);
-      expect(envMock.SESSION_KV.get.calledOnceWith(sessionId, 'json')).to.be.true;
+      expect(session).toEqual(sessionData);
+      expect(envMock.SESSION_KV.get).toHaveBeenCalledWith(sessionId, 'json');
     });
 
     it('should return null if session storage is unavailable', async () => {
         envMock.SESSION_KV = null;
         const session = await sessionService.getSession(envMock, 'test-session-id', ctxMock);
-        expect(session).to.be.null;
+        expect(session).toBeNull();
     });
   });
 
   describe('deleteSession', () => {
     it('should not do anything if no session id is provided', async () => {
       await sessionService.deleteSession(envMock, null, ctxMock);
-      expect(envMock.SESSION_KV.delete.notCalled).to.be.true;
+      expect(envMock.SESSION_KV.delete).not.toHaveBeenCalled();
     });
 
     it('should delete a session for a valid session id', async () => {
       const sessionId = 'test-session-id';
       await sessionService.deleteSession(envMock, sessionId, ctxMock);
-      expect(envMock.SESSION_KV.delete.calledOnceWith(sessionId)).to.be.true;
+      expect(envMock.SESSION_KV.delete).toHaveBeenCalledWith(sessionId);
     });
 
     it('should not throw if session storage is unavailable', async () => {

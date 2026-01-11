@@ -19,10 +19,6 @@ const productIdSchema = Joi.alternatives()
   )
   .required();
 
-const cartSchema = Joi.object({
-  items: Joi.array().items(Joi.object()).required()
-}).unknown(true);
-
 /* ---------- GET CART ---------- */
 export async function getCart(env, userId, ctx) {
   return withSpan(ctx, 'cart.get', { 'cart.user_id': userId }, async (span) => {

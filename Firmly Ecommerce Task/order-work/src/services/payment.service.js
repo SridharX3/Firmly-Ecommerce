@@ -1,4 +1,4 @@
-import { getPayPalAccessToken } from '../utils/paypal';
+import { getPayPalAccessToken } from '../utils/paypal.js';
 import { withSpan } from '../observability/otel.js';
 
 /**

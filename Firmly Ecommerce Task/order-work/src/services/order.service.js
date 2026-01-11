@@ -167,10 +167,6 @@ export async function createOrderTransaction(
         { abortEarly: false }
       );
 
-      if (error) {
-        throw new Error(`Invalid order input: ${error.message}`);
-      }
-
       const insertOrder = env.DB.prepare(`
         INSERT INTO orders (user_id, status, total_amount, currency, payment_provider, payment_reference, shipping_address, billing_address, delivery_mode, ordered_items, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))

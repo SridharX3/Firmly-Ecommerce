@@ -1,6 +1,6 @@
 import { Router } from 'itty-router';
-import { json, preflight } from './response';
-import { getCookie } from './utils/cookie';
+import { json, preflight } from './response.js';
+import { getCookie } from './utils/cookie.js';
 
 const router = Router();
 
@@ -122,8 +122,8 @@ router.post('/cart/items', requireAuth, async (req) => {
     if (existingItem) {
       await req.env.DB.batch([
         req.env.DB.prepare(
-          `UPDATE cart_items SET quantity = quantity + ? WHERE id = ?`
-        ).bind(qty, existingItem.id),
+          `UPDATE cart_items SET quantity = quantity + ?, snapshot_price = ?, snapshot_name = ? WHERE id = ?`
+        ).bind(qty, product.price, product.name, existingItem.id),
         req.env.DB.prepare(UPDATE_CART_TOTAL_SQL).bind(req.userId)
       ]);
     } else {
@@ -181,21 +181,16 @@ router.patch('/cart/items/:productId', requireAuth, async (req) => {
    REMOVE ITEM
 ================================ */
 router.delete('/cart/items/:productId', requireAuth, async (req) => {
-  try {
-    const productId = Number(req.params.productId);
-    if (!Number.isInteger(productId)) return json({ error: 'Invalid product id' }, 400, req);
+  const productId = Number(req.params.productId);
+  if (!Number.isInteger(productId)) return json({ error: 'Invalid product id' }, 400, req);
 
-    await req.env.DB.batch([
-      req.env.DB.prepare(`UPDATE cart_items SET status = 'removed' WHERE product_id = ? AND status = 'active' AND cart_id = ${CART_SUBQUERY}`)
-        .bind(productId, req.userId),
-      req.env.DB.prepare(UPDATE_CART_TOTAL_SQL).bind(req.userId)
-    ]);
+  await req.env.DB.batch([
+    req.env.DB.prepare(`UPDATE cart_items SET status = 'removed' WHERE product_id = ? AND status = 'active' AND cart_id = ${CART_SUBQUERY}`)
+      .bind(productId, req.userId),
+    req.env.DB.prepare(UPDATE_CART_TOTAL_SQL).bind(req.userId)
+  ]);
 
-    return json({ success: true }, 200, req);
-  } catch (err) {
-    console.error('REMOVE ITEM ERROR:', err);
-    return json(err, 500, req);
-  }
+  return json({ success: true }, 200, req);
 });
 
 /* ===============================
@@ -203,10 +198,13 @@ router.delete('/cart/items/:productId', requireAuth, async (req) => {
 ================================ */
 router.delete('/cart', requireAuth, async (req) => {
   try {
-    await req.env.DB
-      .prepare(`UPDATE carts SET status = 'removed', total_price = 0 WHERE user_id = ? AND status = 'active'`)
-      .bind(req.userId)
-      .run();
+    await req.env.DB.batch([
+      req.env.DB.prepare(
+        `UPDATE cart_items SET status = 'removed' WHERE cart_id = ${CART_SUBQUERY}`
+      ).bind(req.userId),
+      req.env.DB.prepare(`UPDATE carts SET status = 'removed', total_price = 0 WHERE user_id = ? AND status = 'active'`)
+        .bind(req.userId)
+    ]);
 
     return json({ success: true }, 200, req);
   } catch (err) {

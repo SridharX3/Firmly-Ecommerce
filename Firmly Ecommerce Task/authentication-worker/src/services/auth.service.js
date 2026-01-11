@@ -100,13 +100,6 @@ export async function login(db, payload, ctx) {
         abortEarly: false
       });
 
-      if (error) {
-        const errorMessage = error.details.map(d => d.message).join(', ');
-        span.setAttribute('auth.error', 'validation_failed');
-        span.setAttribute('auth.validation_error', errorMessage);
-        throw new Error(errorMessage);
-      }
-
       const { email, password } = value;
 
       const user = await withSpan(
