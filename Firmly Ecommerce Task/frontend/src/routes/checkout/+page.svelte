@@ -9,7 +9,8 @@
     submitBillingAddress,
     submitDelivery,
     createPayPalOrder, 
-    cancelCheckout 
+    cancelCheckout,
+    loadSavedAddresses
   } from '$lib/stores/checkout';
   
   let shippingAddress = {
@@ -35,6 +36,9 @@
   };
   let sameAsShipping = true;
 
+  let selectedShippingId = 'new';
+  let selectedBillingId = 'new';
+
   let deliveryType = 'NORMAL';
 
   const currencyFormatter = new Intl.NumberFormat('en-US', {
@@ -44,8 +48,14 @@
 
   onMount(() => {
     loadCart();
-    // Reset step on mount
-    checkout.update(s => ({ ...s, step: 'shipping', error: null }));
+    loadSavedAddresses();
+    
+    // Ensure we have a valid state on mount
+    checkout.update(s => {
+      // If on payment step but missing summary, go back to delivery to re-fetch it
+      if (s.step === 'payment' && !s.summary) return { ...s, step: 'delivery', error: null };
+      return { ...s, error: null };
+    });
   });
 
   async function handleShipping() {
@@ -84,6 +94,36 @@
     if (!confirm('Are you sure you want to cancel checkout?')) return;
     await cancelCheckout();
     window.location.href = '/cart';
+  }
+
+  function handleShippingSelect() {
+    if (selectedShippingId === 'new') {
+      shippingAddress = {
+        full_name: '', phone: '', address_line1: '', address_line2: '',
+        city: '', state: '', postal_code: '', country: 'USA'
+      };
+    } else {
+      const addr = $checkout.savedShippingAddresses.find(a => a.id === selectedShippingId);
+      if (addr) {
+        const { id, user_id, created_at, updated_at, ...rest } = addr;
+        shippingAddress = { ...shippingAddress, ...rest };
+      }
+    }
+  }
+
+  function handleBillingSelect() {
+    if (selectedBillingId === 'new') {
+      billingAddress = {
+        full_name: '', phone: '', address_line1: '', address_line2: '',
+        city: '', state: '', postal_code: '', country: 'USA'
+      };
+    } else {
+      const addr = $checkout.savedBillingAddresses.find(a => a.id === selectedBillingId);
+      if (addr) {
+        const { id, user_id, created_at, updated_at, ...rest } = addr;
+        billingAddress = { ...billingAddress, ...rest };
+      }
+    }
   }
 
   const ui_button_styles_cancel = "text-sm text-red-600 hover:underline";
@@ -126,6 +166,34 @@
     <form on:submit|preventDefault={handleShipping} class="space-y-4">
       <h2 class="text-xl font-semibold mb-4">Shipping Address</h2>
       
+      {#if $checkout.savedShippingAddresses?.length > 0}
+        <div class="mb-6 space-y-3">
+          <p class="font-medium text-gray-700">Saved Addresses</p>
+          {#each $checkout.savedShippingAddresses as addr}
+            <label class="flex items-start space-x-3 border p-3 rounded cursor-pointer hover:bg-gray-50">
+              <input 
+                type="radio" 
+                name="shipping_selection" 
+                value={addr.id} 
+                bind:group={selectedShippingId} 
+                on:change={handleShippingSelect}
+                class="mt-1"
+              />
+              <div class="text-sm">
+                <p class="font-medium">{addr.full_name}</p>
+                <p class="text-gray-600">{addr.address_line1}{#if addr.address_line2}, {addr.address_line2}{/if}</p>
+                <p class="text-gray-600">{addr.city}, {addr.state} {addr.postal_code}</p>
+                <p class="text-gray-600">{addr.country}</p>
+              </div>
+            </label>
+          {/each}
+          <label class="flex items-center space-x-3 border p-3 rounded cursor-pointer hover:bg-gray-50">
+            <input type="radio" name="shipping_selection" value="new" bind:group={selectedShippingId} on:change={handleShippingSelect} />
+            <span class="font-medium">Enter a new address</span>
+          </label>
+        </div>
+      {/if}
+
       <div>
         <label for="full_name" class="block text-sm font-medium mb-1">Full Name</label>
         <input id="full_name" type="text" required bind:value={shippingAddress.full_name} class="w-full border p-2 rounded" placeholder="John Doe" />
@@ -178,6 +246,34 @@
       </label>
 
       {#if !sameAsShipping}
+        {#if $checkout.savedBillingAddresses?.length > 0}
+          <div class="mb-6 space-y-3">
+            <p class="font-medium text-gray-700">Saved Addresses</p>
+            {#each $checkout.savedBillingAddresses as addr}
+              <label class="flex items-start space-x-3 border p-3 rounded cursor-pointer hover:bg-gray-50">
+                <input 
+                  type="radio" 
+                  name="billing_selection" 
+                  value={addr.id} 
+                  bind:group={selectedBillingId} 
+                  on:change={handleBillingSelect}
+                  class="mt-1"
+                />
+                <div class="text-sm">
+                  <p class="font-medium">{addr.full_name}</p>
+                  <p class="text-gray-600">{addr.address_line1}{#if addr.address_line2}, {addr.address_line2}{/if}</p>
+                  <p class="text-gray-600">{addr.city}, {addr.state} {addr.postal_code}</p>
+                  <p class="text-gray-600">{addr.country}</p>
+                </div>
+              </label>
+            {/each}
+            <label class="flex items-center space-x-3 border p-3 rounded cursor-pointer hover:bg-gray-50">
+              <input type="radio" name="billing_selection" value="new" bind:group={selectedBillingId} on:change={handleBillingSelect} />
+              <span class="font-medium">Enter a new address</span>
+            </label>
+          </div>
+        {/if}
+
         <div>
           <label for="billing_full_name" class="block text-sm font-medium mb-1">Full Name</label>
           <input id="billing_full_name" type="text" required bind:value={billingAddress.full_name} class="w-full border p-2 rounded" placeholder="John Doe" />
@@ -278,7 +374,7 @@
         <Button type="button" on:click={() => checkout.update(s => ({ ...s, step: 'delivery' }))} ui_button_styles={"w-1/3 border py-3 rounded hover:bg-gray-50"}>
           Back
         </Button>
-        <Button on:click={handlePayment} disabled={$checkout.loading} ui_button_styles={"w-2/3 bg-[#FFC439] text-black font-bold py-3 rounded hover:bg-[#F4BB30] disabled:opacity-50"}>
+        <Button type="button" on:click={handlePayment} disabled={$checkout.loading} ui_button_styles={"w-2/3 bg-[#FFC439] text-black font-bold py-3 rounded hover:bg-[#F4BB30] disabled:opacity-50"}>
           {$checkout.loading ? 'Initializing...' : 'Pay with PayPal'}
         </Button>
       </div>

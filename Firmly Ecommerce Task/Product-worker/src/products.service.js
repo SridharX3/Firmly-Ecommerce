@@ -23,6 +23,10 @@ const productCreateSchema = Joi.object({
   specs: Joi.object().optional(),
   status: Joi.string().optional(),
   image_url: Joi.string().optional().allow(null),
+  delivery_options: Joi.alternatives(
+    Joi.array().items(Joi.string()),
+    Joi.object()
+  ).optional(),
   inventory: Joi.object({
     available: Joi.number().integer().min(0).default(0),
     reserved: Joi.number().integer().min(0).default(0)
@@ -35,6 +39,10 @@ const productUpdateSchema = Joi.object({
   specs: Joi.object().optional(),
   status: Joi.string().optional(),
   image_url: Joi.string().optional().allow(null),
+  delivery_options: Joi.alternatives(
+    Joi.array().items(Joi.string()),
+    Joi.object()
+  ).optional(),
   inventory: Joi.object({
     available: Joi.number().integer().min(0),
     reserved: Joi.number().integer().min(0)
@@ -64,14 +72,15 @@ export async function create(db, data, ctx) {
     }
 
     const productResult = await db.prepare(`
-      INSERT INTO products (name, price, specs, status, image_url)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO products (name, price, specs, status, image_url, delivery_options)
+      VALUES (?, ?, ?, ?, ?, ?)
     `).bind(
       data.name,
       data.price,
       stringifySpecs(data.specs),
       data.status ?? 'draft',
-      data.image_url ?? null
+      data.image_url ?? null,
+      stringifySpecs(data.delivery_options ?? ["NORMAL","SPEED","EXPRESS"])
     ).run();
 
     const productId = productResult.meta.last_row_id;
@@ -140,6 +149,11 @@ export async function getAll(db, { page, role } = {}, ctx) {
       total,
       totalPages: Math.ceil(total / LIMIT),
       data: results.map(p => {
+        const available = p.available ?? 0;
+        let stockStatus = 'In Stock';
+        if (available === 0) stockStatus = 'Out of Stock';
+        else if (available < 5) stockStatus = `Only ${available} left`;
+
         const product = {
           id: p.id,
           name: p.name,
@@ -149,8 +163,9 @@ export async function getAll(db, { page, role } = {}, ctx) {
           image_url: p.image_url,
           delivery_options: parseSpecs(p.delivery_options),
           stock: {
-            available: p.available ?? 0,
-            reserved: p.reserved ?? 0
+            available: available,
+            reserved: p.reserved ?? 0,
+            status: stockStatus
           }
         };
 
@@ -165,7 +180,7 @@ export async function getAll(db, { page, role } = {}, ctx) {
 }
 
 /* ---------- READ ONE ---------- */
-export async function getById(db, id, { role } = {}, ctx) {
+export async function getById(db, id, { role, quantity } = {}, ctx) {
   return withSpan(ctx, 'products.getById', { product_id: id, role }, async () => {
 
     const { error } = idSchema.validate(id);
@@ -193,6 +208,16 @@ export async function getById(db, id, { role } = {}, ctx) {
 
     if (!p) return null;
 
+    const available = p.available ?? 0;
+    let stockMessage = 'In Stock';
+    if (available === 0) {
+      stockMessage = 'Out of Stock';
+    } else if (quantity && quantity > available) {
+      stockMessage = `Only ${available} products left`;
+    } else if (available < 5) {
+      stockMessage = `Only ${available} products left`;
+    }
+
     const product = {
       id: p.id,
       name: p.name,
@@ -202,8 +227,9 @@ export async function getById(db, id, { role } = {}, ctx) {
       image_url: p.image_url,
       delivery_options: parseSpecs(p.delivery_options),
       stock: {
-        available: p.available ?? 0,
-        reserved: p.reserved ?? 0
+        available: available,
+        reserved: p.reserved ?? 0,
+        message: stockMessage
       }
     };
 
@@ -235,7 +261,7 @@ export async function update(db, id, data, ctx) {
     if (productEntries.length > 0) {
       const fields = productEntries.map(([key]) => `${key} = ?`);
       const values = productEntries.map(([key, value]) => 
-        key === 'specs' ? stringifySpecs(value) : value
+        (key === 'specs' || key === 'delivery_options') ? stringifySpecs(value) : value
       );
       statements.push(
         db.prepare(`

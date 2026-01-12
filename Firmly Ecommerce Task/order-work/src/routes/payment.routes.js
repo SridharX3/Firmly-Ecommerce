@@ -3,7 +3,6 @@ import {
   createPayPalOrder,
   capturePayPalOrder
 } from '../services/payment.service.js';
-import { getCookie } from '../utils/cookie.js';
 import { safeJson } from '../utils/safeJ.js';
 import { createOrderTransaction } from '../services/order.service.js';
 import { withSpan, setAttributes } from '../observability/otel.js';
@@ -14,36 +13,27 @@ import { withSpan, setAttributes } from '../observability/otel.js';
 export async function paypalCreate(req, env, ctx) {
   return withSpan(ctx, 'payment.paypal.create', { 'user.id': req.userId }, async (span) => {
     const { userId } = req;
-    if (!userId) return json({ error: 'Unauthorized' }, 401, req);
 
-    const sessionId = getCookie(req, 'session_id');
-    const sessionRaw = await env.SESSION_KV.get(sessionId);
-    if (!sessionRaw) return json({ error: 'Session expired' }, 401, req);
-
-    const session = JSON.parse(sessionRaw);
-    const checkout = session.checkout;
-
-    if (!checkout || checkout.step !== 'BILLING_COMPLETED') {
-      return json({ error: 'Please complete shipping and billing steps first' }, 400, req);
-    }
-
-    // Edge Case: Re-verify cart total from DB to prevent stale session pricing
-    const cart = await env.DB.prepare('SELECT total_price FROM carts WHERE id = ? AND status = ?')
-      .bind(checkout.cart_id, 'active')
+    const checkout = await env.DB.prepare('SELECT * FROM checkout_snapshot WHERE user_id = ? AND status = ?')
+      .bind(userId, 'CREATED')
       .first();
 
-    if (!cart) return json({ error: 'Active cart not found' }, 404, req);
-    
-    // Read total amount from session (includes shipping + tax)
-    const finalTotal = checkout.total_price;
-
-    if (finalTotal <= 0) {
-      return json({ error: 'Order total must be greater than 0' }, 400, req);
+    if (!checkout) {
+      return json({ error: 'No active checkout session found. Please complete shipping and billing steps.' }, 404, req);
     }
+
+    if (!checkout.total || checkout.total <= 0) {
+      return json({ error: 'Checkout total is invalid. Please select a delivery method.' }, 400, req);
+    }
+
+    const currency = 'USD';
+    const finalTotal = checkout.total;
+    const checkoutId = checkout.id;
 
     setAttributes(span, {
       'payment.total': finalTotal,
-      'payment.currency': checkout.currency || 'USD'
+      'payment.currency': currency,
+      'checkout.id': checkoutId
     });
 
     /* ===============================
@@ -59,7 +49,7 @@ export async function paypalCreate(req, env, ctx) {
         env,
         {
           total_amount: finalTotal,
-          currency: checkout.currency || 'USD',
+          currency: currency,
           return_url: `${origin}/order/success`,
           cancel_url: `${origin}/order/cancel`
         },
@@ -94,7 +84,6 @@ export async function paypalCreate(req, env, ctx) {
 export async function paypalCapture(req, env, ctx) {
   return withSpan(ctx, 'payment.paypal.capture', { 'user.id': req.userId }, async (span) => {
     const { userId } = req;
-    if (!userId) return json({ error: 'Unauthorized' }, 401, req);
 
     const body = await safeJson(req);
     const { paypal_order_id } = body;
@@ -103,6 +92,12 @@ export async function paypalCapture(req, env, ctx) {
       return json({ error: 'paypal_order_id required' }, 400, req);
     }
     span.setAttribute('payment.paypal_order_id', paypal_order_id);
+
+    const checkout = await env.DB.prepare('SELECT * FROM checkout_snapshot WHERE user_id = ? AND status = ?')
+      .bind(userId, 'CREATED')
+      .first();
+
+    if (!checkout) return json({ error: 'No active checkout session found.' }, 404, req);
 
     try {
       const result = await capturePayPalOrder(
@@ -113,27 +108,13 @@ export async function paypalCapture(req, env, ctx) {
       span.setAttribute('payment.capture_status', result.status);
 
       if (result.status === 'COMPLETED') {
-        const sessionId = getCookie(req, 'session_id');
-        const session = JSON.parse(await env.SESSION_KV.get(sessionId));
-
         const orderId = await createOrderTransaction(env, {
-          user_id: Number(userId),
-          status: 'PAID',
-          total_amount: session.checkout.total_price,
-          currency: session.checkout.currency,
+          checkout_id: checkout.id,
           payment_provider: 'paypal',
-          payment_reference: result.capture_id,
-          cart_id: session.checkout.cart_id,
-          shipping_address: session.checkout.shipping_address,
-          billing_address: session.checkout.billing_address || session.checkout.shipping_address,
-          delivery_mode: session.checkout.delivery_type
+          payment_reference: result.capture_id
         }, ctx);
         
         span.setAttribute('order.id', orderId);
-        
-        // 2. Clear checkout session state
-        delete session.checkout;
-        await env.SESSION_KV.put(sessionId, JSON.stringify(session));
 
         return json({
           success: true,

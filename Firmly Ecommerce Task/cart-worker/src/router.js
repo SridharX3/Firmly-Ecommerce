@@ -1,87 +1,78 @@
 import { Router } from 'itty-router';
 import { json, preflight } from './response.js';
-import { getCookie } from './utils/cookie.js';
+import { requireAuth } from './middleware/auth.js';
+import { signToken } from './utils/jwt.js';
+import { setAuthCookie, getCookie } from './utils/cookie.js';
+import * as CartService from './services/cart.service.js';
 
 const router = Router();
-
-const CART_EMPTY_MSG = { message: 'Cart is empty' };
-const CART_SUBQUERY = `(SELECT id FROM carts WHERE user_id = ? AND status = 'active')`;
-const UPDATE_CART_TOTAL_SQL = `
-  UPDATE carts 
-  SET total_price = (
-    SELECT COALESCE(SUM(snapshot_price * quantity), 0) 
-    FROM cart_items 
-    WHERE cart_id = carts.id AND status = 'active'
-  )
-  WHERE user_id = ? AND status = 'active'
-`;
 
 /* ===============================
    MIDDLEWARES
 ================================ */
-const withAuth = async (req, env) => {
-  req.env = env;
-  req.userId = null;
-  
-  let sessionId = getCookie(req, 'session_id');
-
-  if (!sessionId) {
-    const authHeader = req.headers.get('Authorization');
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      sessionId = authHeader.substring(7).trim();
-    }
+const handleError = (err, req) => {
+  console.error('CART ROUTER ERROR:', err);
+  if (err.message.includes('Product not found') || err.message.includes('Cart not found')) {
+    return json({ error: err.message }, 404, req);
   }
-
-  if (!sessionId) return;
-
-  const session = await env.SESSION_KV.get(sessionId);
-  if (session) {
-    try {
-      req.userId = JSON.parse(session)?.user_id ?? null;
-    } catch {}
+  if (err.message.includes('Invalid') || err.message.includes('locked')) {
+    return json({ error: err.message }, 400, req);
   }
-};
-
-const requireAuth = (req) => {
-  if (!req.userId) return json({ error: 'You are not logged in' }, 401, req);
+  return json(err, 500, req);
 };
 
 router.options('*', preflight);
-router.all('*', withAuth);
+
+// Public Route
+router.get('/health', () => json({ status: 'ok' }));
+
+/* ===============================
+   DEBUG TOKEN
+================================ */
+router.get('/debug-token', (req) => {
+  let token = getCookie(req, 'auth_token');
+  if (!token) {
+    const authHeader = req.headers.get('Authorization');
+    if (authHeader?.startsWith('Bearer ')) {
+      token = authHeader.substring(7).trim();
+    }
+  }
+  return json({ token, cookie_header: req.headers.get('Cookie') });
+});
+
+/* ===============================
+   LOGIN (DEV HELPER)
+================================ */
+router.get('/login', async (req, env) => {
+  const secret = env.JWT_SECRET || 'default-secret';
+  const payload = {
+    user_id: 8,
+    email: 'exam@example.com',
+    role: 'admin',
+    exp: Math.floor(Date.now() / 1000) + 86400 // 24 hours
+  };
+  const token = await signToken(payload, secret);
+  return json({ message: 'Logged in', token }, 200, req, {
+    'Set-Cookie': setAuthCookie(token)
+  });
+});
 
 /* ===============================
    GET CART
 ================================ */
-router.get('/cart', requireAuth, async (req) => {
+router.get('/cart', requireAuth, async (req, env, ctx) => {
   try {
-    const cart = await req.env.DB
-      .prepare(`SELECT id, currency, total_price FROM carts WHERE user_id = ? AND status = 'active' LIMIT 1`)
-      .bind(req.userId)
-      .first();
-
-    if (!cart) return json(CART_EMPTY_MSG, 200, req);
-
-    const { results = [] } = await req.env.DB
-      .prepare(
-        `SELECT product_id, quantity, snapshot_price AS price, snapshot_name AS name, image_url
-         FROM cart_items WHERE cart_id = ? AND status = 'active'`
-      )
-      .bind(cart.id)
-      .all();
-
-    if (results.length === 0) return json(CART_EMPTY_MSG, 200, req);
-
-    return json({ items: results, subtotal: cart.total_price, currency: cart.currency }, 200, req);
+    const cart = await CartService.getCart(env, req.user.user_id, ctx);
+    return json(cart, 200, req);
   } catch (err) {
-    console.error('GET CART ERROR:', err);
-    return json(err, 500, req);
+    return handleError(err, req);
   }
 });
 
 /* ===============================
    ADD TO CART
 ================================ */
-router.post('/cart/items', requireAuth, async (req) => {
+router.post('/cart/items', requireAuth, async (req, env, ctx) => {
   try {
     let body;
     try { body = await req.json(); } catch {
@@ -89,64 +80,19 @@ router.post('/cart/items', requireAuth, async (req) => {
     }
 
     const productId = Number(body?.product_id);
-    const qty = Number(body?.quantity ?? 1);
+    const qty = Number(body?.quantity ?? 1); // Default to 1
 
-    if (!Number.isInteger(productId) || !Number.isInteger(qty) || qty < 1) {
-      return json({ error: 'Invalid payload' }, 400, req);
-    }
-
-    const product = await req.env.DB
-      .prepare(`SELECT name, price, image_url FROM products WHERE id = ? AND status = 'active'`)
-      .bind(productId)
-      .first();
-
-    if (!product) return json({ error: 'Product not found' }, 404, req);
-
-    let cart = await req.env.DB
-      .prepare(`SELECT id FROM carts WHERE user_id = ? AND status = 'active' LIMIT 1`)
-      .bind(req.userId)
-      .first();
-
-    if (!cart) {
-      const res = await req.env.DB
-        .prepare(`INSERT INTO carts (user_id, status, currency) VALUES (?, 'active', 'USD')`)
-        .bind(req.userId)
-        .run();
-      cart = { id: res.meta?.last_row_id ?? res.lastRowId };
-    }
-
-    const existingItem = await req.env.DB.prepare(
-      `SELECT id FROM cart_items WHERE cart_id = ? AND product_id = ? AND status = 'active'`
-    ).bind(cart.id, productId).first();
-
-    if (existingItem) {
-      await req.env.DB.batch([
-        req.env.DB.prepare(
-          `UPDATE cart_items SET quantity = quantity + ?, snapshot_price = ?, snapshot_name = ? WHERE id = ?`
-        ).bind(qty, product.price, product.name, existingItem.id),
-        req.env.DB.prepare(UPDATE_CART_TOTAL_SQL).bind(req.userId)
-      ]);
-    } else {
-      await req.env.DB.batch([
-        req.env.DB.prepare(
-          `INSERT INTO cart_items (cart_id, product_id, quantity, snapshot_price, snapshot_name, image_url, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'active')`
-        ).bind(cart.id, productId, qty, product.price, product.name, product.image_url),
-        req.env.DB.prepare(UPDATE_CART_TOTAL_SQL).bind(req.userId)
-      ]);
-    }
-
-    return json({ success: true }, 201, req);
+    const result = await CartService.addToCart(env, req.user.user_id, productId, qty, ctx);
+    return json(result, 201, req);
   } catch (err) {
-    console.error('ADD TO CART ERROR:', err);
-    return json(err, 500, req);
+    return handleError(err, req);
   }
 });
 
 /* ===============================
    UPDATE QUANTITY
 ================================ */
-router.patch('/cart/items/:productId', requireAuth, async (req) => {
+router.patch('/cart/items/:productId', requireAuth, async (req, env, ctx) => {
   try {
     let body;
     try { 
@@ -158,58 +104,35 @@ router.patch('/cart/items/:productId', requireAuth, async (req) => {
     const qty = Number(body?.quantity);
     const productId = Number(req.params.productId);
 
-    if (!Number.isInteger(productId) || !Number.isInteger(qty) || qty < 1) {
-      return json({ error: 'Invalid quantity' }, 400, req);
-    }
-
-    await req.env.DB.batch([
-      req.env.DB.prepare(
-        `UPDATE cart_items SET quantity = ?
-         WHERE product_id = ? AND status = 'active' AND cart_id = ${CART_SUBQUERY}`
-      ).bind(qty, productId, req.userId),
-      req.env.DB.prepare(UPDATE_CART_TOTAL_SQL).bind(req.userId)
-    ]);
-
-    return json({ success: true }, 200, req);
+    const result = await CartService.updateItemQuantity(env, req.user.user_id, productId, qty, ctx);
+    return json(result, 200, req);
   } catch (err) {
-    console.error('UPDATE CART ERROR:', err);
-    return json(err, 500, req);
+    return handleError(err, req);
   }
 });
 
 /* ===============================
    REMOVE ITEM
 ================================ */
-router.delete('/cart/items/:productId', requireAuth, async (req) => {
-  const productId = Number(req.params.productId);
-  if (!Number.isInteger(productId)) return json({ error: 'Invalid product id' }, 400, req);
-
-  await req.env.DB.batch([
-    req.env.DB.prepare(`UPDATE cart_items SET status = 'removed' WHERE product_id = ? AND status = 'active' AND cart_id = ${CART_SUBQUERY}`)
-      .bind(productId, req.userId),
-    req.env.DB.prepare(UPDATE_CART_TOTAL_SQL).bind(req.userId)
-  ]);
-
-  return json({ success: true }, 200, req);
+router.delete('/cart/items/:productId', requireAuth, async (req, env, ctx) => {
+  try {
+    const productId = Number(req.params.productId);
+    const result = await CartService.removeItem(env, req.user.user_id, productId, ctx);
+    return json(result, 200, req);
+  } catch (err) {
+    return handleError(err, req);
+  }
 });
 
 /* ===============================
    CLEAR CART
 ================================ */
-router.delete('/cart', requireAuth, async (req) => {
+router.delete('/cart', requireAuth, async (req, env, ctx) => {
   try {
-    await req.env.DB.batch([
-      req.env.DB.prepare(
-        `UPDATE cart_items SET status = 'removed' WHERE cart_id = ${CART_SUBQUERY}`
-      ).bind(req.userId),
-      req.env.DB.prepare(`UPDATE carts SET status = 'removed', total_price = 0 WHERE user_id = ? AND status = 'active'`)
-        .bind(req.userId)
-    ]);
-
-    return json({ success: true }, 200, req);
+    const result = await CartService.clearCart(env, req.user.user_id, ctx);
+    return json(result, 200, req);
   } catch (err) {
-    console.error('CLEAR CART ERROR:', err);
-    return json(err, 500, req);
+    return handleError(err, req);
   }
 });
 

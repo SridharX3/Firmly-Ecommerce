@@ -1,14 +1,24 @@
 import { Router } from 'itty-router';
 import { json } from './response.js';
 import * as authService from './services/auth.service.js';
-import * as sessionService from './services/session.service.js';
+import { signToken, verifyToken } from './utils/jwt.js';
 import {
-  setSessionCookie,
-  clearSessionCookie,
-  getCookie
+  setAuthCookie,
+  clearAuthCookie
 } from './utils/cookie.js';
 
 const router = Router();
+
+// Helper to authenticate request
+const getUserId = async (req, secret) => {
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new Error('Unauthorized: Missing token');
+  }
+  const token = authHeader.split(' ')[1];
+  const payload = await verifyToken(token, secret);
+  return payload.user_id;
+};
 
 /* ======================
    REGISTER
@@ -18,6 +28,8 @@ router.post('/auth/register', async (req, env, ctx) => {
     let body;
     
     body = await req.json();
+
+    const secret = env.JWT_SECRET || 'default-secret';
 
     const authKey = req.headers.get('auth-key');
 
@@ -29,18 +41,19 @@ router.post('/auth/register', async (req, env, ctx) => {
       env.ADMIN_SECRET
     );
 
-    const sessionId = await sessionService.createSession(
-      env,
-      user.id,
-      ctx
-    );
+    const token = await signToken({
+      user_id: user.id,
+      email: user.email,
+      role: user.role || 'user',
+      exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 1 day expiration
+    }, secret);
 
     return json(
       user,
       201,
       req,
       {
-        'Set-Cookie': setSessionCookie(sessionId)
+        'Set-Cookie': setAuthCookie(token)
       }
     );
   } catch (err) {
@@ -64,16 +77,23 @@ router.post('/auth/login', async (req, env, ctx) => {
     
     body = await req.json();
 
-    const user = await authService.login(env.DB, body, ctx);
+    const secret = env.JWT_SECRET || 'default-secret';
 
-    const sessionId = await sessionService.createSession(env, user.id, ctx);
+    const user = await authService.login(env.DB, body, ctx, env.ADMIN_SECRET);
+
+    const token = await signToken({
+      user_id: user.id,
+      email: user.email,
+      role: user.role,
+      exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
+    }, secret);
 
     return json(
       user,
       200,
       req,
       {
-        'Set-Cookie': setSessionCookie(sessionId)
+        'Set-Cookie': setAuthCookie(token)
       }
     );
   } catch (err) {
@@ -93,18 +113,12 @@ router.post('/auth/login', async (req, env, ctx) => {
 ====================== */
 router.post('/auth/logout', async (req, env, ctx) => {
   try {
-    const sessionId = getCookie(req, 'session_id');
-
-    if (sessionId) {
-      await sessionService.deleteSession(env, sessionId, ctx);
-    }
-
     return json(
       { success: true },
       200,
       req,
       {
-        'Set-Cookie': clearSessionCookie()
+        'Set-Cookie': clearAuthCookie()
       }
     );
   } catch (err) {
@@ -113,8 +127,72 @@ router.post('/auth/logout', async (req, env, ctx) => {
       { error: 'Logout failed', message: err.message },
       500,
       req,
-      { 'Set-Cookie': clearSessionCookie() }
+      { 'Set-Cookie': clearAuthCookie() }
     );
+  }
+});
+
+/* ======================
+   SHIPPING ADDRESS
+====================== */
+router.get('/user/shipping-address', async (req, env, ctx) => {
+  try {
+    const secret = env.JWT_SECRET || 'default-secret';
+    const userId = await getUserId(req, secret);
+
+    const address = await authService.getShippingAddress(env.DB, userId, ctx, env.ADMIN_SECRET);
+
+    return json({ shipping_address: address }, 200, req);
+  } catch (err) {
+    const status = err.message.includes('Unauthorized') ? 401 : 500;
+    return json({ error: err.message }, status, req);
+  }
+});
+
+router.post('/user/shipping-address', async (req, env, ctx) => {
+  try {
+    const secret = env.JWT_SECRET || 'default-secret';
+    const userId = await getUserId(req, secret);
+    const body = await req.json();
+
+    await authService.updateShippingAddress(env.DB, userId, body.shipping_address, ctx, env.ADMIN_SECRET);
+
+    return json({ success: true, shipping_address: body.shipping_address }, 200, req);
+  } catch (err) {
+    const status = err.message.includes('Unauthorized') ? 401 : 500;
+    return json({ error: err.message }, status, req);
+  }
+});
+
+/* ======================
+   BILLING ADDRESS
+====================== */
+router.get('/user/billing-address', async (req, env, ctx) => {
+  try {
+    const secret = env.JWT_SECRET || 'default-secret';
+    const userId = await getUserId(req, secret);
+
+    const address = await authService.getBillingAddress(env.DB, userId, ctx, env.ADMIN_SECRET);
+
+    return json({ billing_address: address }, 200, req);
+  } catch (err) {
+    const status = err.message.includes('Unauthorized') ? 401 : 500;
+    return json({ error: err.message }, status, req);
+  }
+});
+
+router.post('/user/billing-address', async (req, env, ctx) => {
+  try {
+    const secret = env.JWT_SECRET || 'default-secret';
+    const userId = await getUserId(req, secret);
+    const body = await req.json();
+
+    await authService.updateBillingAddress(env.DB, userId, body.billing_address, ctx, env.ADMIN_SECRET);
+
+    return json({ success: true, billing_address: body.billing_address }, 200, req);
+  } catch (err) {
+    const status = err.message.includes('Unauthorized') ? 401 : 500;
+    return json({ error: err.message }, status, req);
   }
 });
 

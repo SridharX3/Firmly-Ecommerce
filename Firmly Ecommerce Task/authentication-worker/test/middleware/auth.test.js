@@ -10,6 +10,12 @@ jest.mock('../../src/observability/otel.js', () => ({
 }));
 import * as otel from '../../src/observability/otel.js';
 
+// Mock the jwt module
+jest.mock('../../src/utils/jwt.js', () => ({
+  verifyToken: jest.fn()
+}));
+import { verifyToken } from '../../src/utils/jwt.js';
+
 describe('Auth Middleware', () => {
   let request;
   let env;
@@ -25,66 +31,50 @@ describe('Auth Middleware', () => {
       user: null,
     };
     env = {
-      SESSION_KV: {
-        get: sinon.stub(),
-      },
+      JWT_SECRET: 'test-secret'
     };
     ctx = {};
   });
 
   afterEach(() => {
     sinon.restore();
+    jest.clearAllMocks();
   });
 
-  it('should return 401 if session_id cookie is missing', async () => {
+  it('should return 401 if auth_token cookie is missing', async () => {
     const response = await requireAuth(request, env, ctx);
     const body = await response.json();
     expect(response.status).to.equal(401);
     expect(body.error).to.equal('Authentication required');
   });
 
-  it('should return 500 if SESSION_KV is not available', async () => {
-    headers.set('Cookie', 'session_id=some-session-id');
-    env.SESSION_KV = null;
+  it('should return 500 if JWT_SECRET is not available', async () => {
+    headers.set('Cookie', 'auth_token=some-token');
+    env.JWT_SECRET = null;
     const response = await requireAuth(request, env, ctx);
     const body = await response.json();
     expect(response.status).to.equal(500);
-    expect(body.error).to.equal('Internal server error: Session store unavailable');
+    expect(body.error).to.equal('Internal server error: Configuration missing');
   });
 
-  it('should return 401 if session is not found in KV', async () => {
-    headers.set('Cookie', 'session_id=some-session-id');
-    env.SESSION_KV.get.resolves(null);
+  it('should return 401 if token verification fails', async () => {
+    headers.set('Cookie', 'auth_token=invalid-token');
+    verifyToken.mockRejectedValue(new Error('Invalid token'));
+    
     const response = await requireAuth(request, env, ctx);
     const body = await response.json();
     expect(response.status).to.equal(401);
-    expect(body.error).to.equal('Invalid or expired session');
-  });
-
-  it('should return 401 if session is found but has no user_id', async () => {
-    headers.set('Cookie', 'session_id=some-session-id');
-    env.SESSION_KV.get.resolves({ some_other_data: 'data' });
-    const response = await requireAuth(request, env, ctx);
-    const body = await response.json();
-    expect(response.status).to.equal(401);
-    expect(body.error).to.equal('Invalid or expired session');
+    expect(body.error).to.equal('Invalid or expired token');
   });
 
   it('should set request.user and return null on successful authentication', async () => {
-    headers.set('Cookie', 'session_id=some-session-id');
-    const session = { user_id: 123 };
-    env.SESSION_KV.get.resolves(session);
+    headers.set('Cookie', 'auth_token=valid-token');
+    const payload = { user_id: 123, role: 'user' };
+    verifyToken.mockResolvedValue(payload);
+
     const result = await requireAuth(request, env, ctx);
     expect(result).to.be.null;
-    expect(request.user).to.deep.equal(session);
-  });
-
-  it('should return 500 if there is an error reading from KV', async () => {
-    headers.set('Cookie', 'session_id=some-session-id');
-    env.SESSION_KV.get.throws(new Error('KV read error'));
-    const response = await requireAuth(request, env, ctx);
-    const body = await response.json();
-    expect(response.status).to.equal(500);
-    expect(body.error).to.equal('Failed to retrieve session');
+    expect(request.user).to.deep.equal(payload);
+    expect(verifyToken).toHaveBeenCalledWith('valid-token', 'test-secret');
   });
 });

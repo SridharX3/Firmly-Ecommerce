@@ -9,7 +9,7 @@ export async function createPayPalOrder(
   { total_amount, currency, return_url, cancel_url },
   ctx
 ) {
-  const BASE = env.PAYPAL_API_BASE || 'https://api-m.sandbox.paypal.com';
+  const BASE = env.PAYPAL_API || 'https://api-m.sandbox.paypal.com';
 
   return withSpan(
     ctx,
@@ -109,7 +109,7 @@ export async function capturePayPalOrder(
   paypalOrderId,
   ctx
 ) {
-  const BASE = env.PAYPAL_API_BASE || 'https://api-m.sandbox.paypal.com';
+  const BASE = env.PAYPAL_API || 'https://api-m.sandbox.paypal.com';
 
   return withSpan(
     ctx,

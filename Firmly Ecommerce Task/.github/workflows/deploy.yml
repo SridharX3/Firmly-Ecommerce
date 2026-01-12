@@ -1,0 +1,59 @@
+name: CD - Deploy to Cloudflare
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Project
+        run: npm run build
+        # Ensure this generates your output folder (e.g., 'dist', 'out')
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: 'my-app-name' # <--- UPDATE THIS with your Cloudflare project name
+          directory: 'dist'          # <--- UPDATE THIS with your build output folder
+          gitHubToken: ${{ secrets.GIT_TOKEN }}
+
+      # Slack Notification (Success)
+      - name: Slack Notification - Success
+        if: success()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: '#36a64f'
+          SLACK_TITLE: 'Deployment Successful'
+          SLACK_MESSAGE: 'New version deployed to Cloudflare Production!'
+
+      # Slack Notification (Failure)
+      - name: Slack Notification - Failure
+        if: failure()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: '#FF0000'
+          SLACK_TITLE: 'Deployment Failed'
+          SLACK_MESSAGE: 'Failed to deploy to Cloudflare. Check GitHub Actions logs.'

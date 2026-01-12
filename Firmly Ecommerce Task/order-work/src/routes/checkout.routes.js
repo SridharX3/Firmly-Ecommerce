@@ -1,7 +1,7 @@
 import { json } from '../response.js';
 import { safeJson } from '../utils/safeJ.js';
-import { getCookie } from '../utils/cookie.js';
 import Joi from 'joi';
+import { cancelCheckout } from '../services/checkout.service.js';
 import { withSpan, setAttributes } from '../observability/otel.js';
 
 const DELIVERY_PRICING = {
@@ -21,46 +21,130 @@ const addressSchema = Joi.object({
   country: Joi.string().length(2).default('IN')
 }).rename('zip', 'postal_code');
 
+function syncUserProfile(ctx, env, req, type, address) {
+  const baseUrl = env.AUTH_WORKER_URL;
+  if (!baseUrl) {
+    console.warn('[Sync Profile] AUTH_WORKER_URL not configured');
+    return;
+  }
+
+  const url = `${baseUrl}/user/${type}-address`;
+  
+  ctx.waitUntil(
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': req.headers.get('Cookie') || ''
+      },
+      body: JSON.stringify({ [`${type}_address`]: address })
+    }).catch(err => console.error(`[Sync Profile] Failed to update ${type} address:`, err))
+  );
+}
+
+async function getActiveCheckout(env, userId) {
+  return env.DB.prepare('SELECT * FROM checkout_snapshot WHERE user_id = ? AND status = ?')
+    .bind(userId, 'CREATED')
+    .first();
+}
+
+export async function getCheckout(req, env, ctx) {
+  return withSpan(ctx, 'checkout.get', { 'user.id': req.userId }, async (span) => {
+    const checkout = await getActiveCheckout(env, req.userId);
+    
+    if (!checkout) {
+      return json({ message: 'No active checkout session' }, 404, req);
+    }
+
+    const cartSnapshot = checkout.cart_snapshot ? JSON.parse(checkout.cart_snapshot) : [];
+
+    // Hydrate images since they are not saved in snapshot anymore
+    for (const item of cartSnapshot) {
+      if (!item.image_url) {
+        const product = await env.DB.prepare('SELECT image_url FROM products WHERE id = ?')
+          .bind(item.product_id)
+          .first();
+        if (product) item.image_url = product.image_url;
+      }
+    }
+
+    const response = {
+      ...checkout,
+      shipping_address: checkout.shipping_address ? JSON.parse(checkout.shipping_address) : null,
+      billing_address: checkout.billing_address ? JSON.parse(checkout.billing_address) : null,
+      cart_snapshot: cartSnapshot
+    };
+
+    return json(response, 200, req);
+  });
+}
+
 export async function checkoutShipping(req, env, ctx) {
   return withSpan(ctx, 'checkout.shipping', { 'user.id': req.userId }, async (span) => {
     const { userId } = req;
-    if (!userId) return json({ error: 'Unauthorized' }, 401, req);
-
     const body = await safeJson(req);
     const { shipping_address } = body;
 
-    if (!shipping_address || !shipping_address.address_line1) {
+    if (!shipping_address) {
       return json({ error: 'Shipping address is required' }, 400, req);
     }
 
-    const { error, value: validated_shipping_address } = addressSchema.validate(shipping_address);
-
+    const { error, value: validated_address } = addressSchema.validate(shipping_address);
     if (error) {
       return json({ error: `Invalid shipping address: ${error.message}` }, 400, req);
     }
 
-    // Verify user has an active cart in the database
-    const cart = await env.DB.prepare('SELECT id FROM carts WHERE user_id = ? AND status = ? ORDER BY created_at DESC')
-      .bind(userId, 'active')
-      .first();
+    let checkout = await getActiveCheckout(env, userId);
 
-    if (!cart) return json({ error: 'No active cart found' }, 404, req);
+    if (checkout) {
+      await env.DB.prepare('UPDATE checkout_snapshot SET shipping_address = ? WHERE id = ?')
+        .bind(JSON.stringify(validated_address), checkout.id)
+        .run();
+    } else {
+      const cart = await env.DB.prepare('SELECT id FROM carts WHERE user_id = ? AND status = ? ORDER BY created_at DESC')
+        .bind(userId, 'active')
+        .first();
 
-    // Get current session data
-    const sessionId = getCookie(req, 'session_id');
-    if (!sessionId) return json({ error: 'Session ID missing' }, 401, req);
-    const sessionRaw = await env.SESSION_KV.get(sessionId);
-    const session = JSON.parse(sessionRaw || '{}');
+      if (!cart) return json({ error: 'No active cart found' }, 404, req);
 
-    // Update session with shipping info
-    session.checkout = {
-      ...session.checkout,
-      shipping_address: validated_shipping_address,
-      cart_id: cart.id,
-      step: 'SHIPPING_COMPLETED'
-    };
+      const items = await env.DB.prepare(`
+        SELECT ci.*, p.delivery_options 
+        FROM cart_items ci
+        JOIN products p ON ci.product_id = p.id
+        WHERE ci.cart_id = ? AND ci.status = ?
+      `).bind(cart.id, 'active').all();
 
-    await env.SESSION_KV.put(sessionId, JSON.stringify(session));
+      if (!items.results.length) return json({ error: 'Cart is empty' }, 400, req);
+
+      let subtotal = 0;
+      const snapshot = items.results.map(item => {
+        subtotal += item.snapshot_price * item.quantity;
+        return {
+          product_id: item.product_id,
+          name: item.snapshot_name || item.name,
+          price: item.snapshot_price,
+          quantity: item.quantity
+        };
+      });
+
+      const checkoutId = crypto.randomUUID();
+      const tax = 0;
+      const shipping = 0;
+      const total = subtotal;
+
+      await env.DB.batch([
+        env.DB.prepare(`
+          INSERT INTO checkout_snapshot 
+          (id, user_id, cart_id, cart_snapshot, subtotal, tax, shipping, total, status, shipping_address)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CREATED', ?)
+        `).bind(
+          checkoutId, userId, cart.id, JSON.stringify(snapshot), subtotal, tax, shipping, total, JSON.stringify(validated_address)
+        ),
+        env.DB.prepare("UPDATE carts SET status = 'CHECKOUT_LOCKED' WHERE id = ?").bind(cart.id)
+      ]);
+    }
+
+    syncUserProfile(ctx, env, req, 'shipping', validated_address);
 
     return json({ message: 'Shipping address saved', next_step: 'billing' }, 200, req);
   });
@@ -69,38 +153,27 @@ export async function checkoutShipping(req, env, ctx) {
 export async function checkoutBillingAddress(req, env, ctx) {
   return withSpan(ctx, 'checkout.billing', { 'user.id': req.userId }, async (span) => {
     const { userId } = req;
-    if (!userId) return json({ error: 'Unauthorized' }, 401, req);
-
     const body = await safeJson(req);
     const { billing_address, use_shipping_for_billing } = body;
 
-    if (!billing_address && !use_shipping_for_billing) {
-      return json({ error: 'Billing address is required' }, 400, req);
-    }
+    const checkout = await getActiveCheckout(env, userId);
+    if (!checkout) return json({ error: 'Session expired or not found' }, 404, req);
 
-    const sessionId = getCookie(req, 'session_id');
-    if (!sessionId) return json({ error: 'Session ID missing' }, 401, req);
-    const sessionRaw = await env.SESSION_KV.get(sessionId);
-    if (!sessionRaw) return json({ error: 'Session expired' }, 401, req);
-    
-    const session = JSON.parse(sessionRaw);
-    if (session.checkout?.step !== 'SHIPPING_COMPLETED') {
-      return json({ error: 'Please complete shipping step first' }, 400, req);
-    }
-
-    let validated_billing_address = session.checkout.shipping_address;
-    if (!use_shipping_for_billing) {
+    let finalBilling = null;
+    if (use_shipping_for_billing) {
+      finalBilling = JSON.parse(checkout.shipping_address);
+    } else {
+      if (!billing_address) return json({ error: 'Billing address is required' }, 400, req);
       const { error, value } = addressSchema.validate(billing_address);
-      if (error) {
-        return json({ error: `Invalid billing address: ${error.message}` }, 400, req);
-      }
-      validated_billing_address = value;
+      if (error) return json({ error: `Invalid billing address: ${error.message}` }, 400, req);
+      finalBilling = value;
     }
 
-    session.checkout.billing_address = validated_billing_address;
-    session.checkout.step = 'BILLING_ADDRESS_COMPLETED';
+    await env.DB.prepare('UPDATE checkout_snapshot SET billing_address = ? WHERE id = ?')
+      .bind(JSON.stringify(finalBilling), checkout.id)
+      .run();
 
-    await env.SESSION_KV.put(sessionId, JSON.stringify(session));
+    syncUserProfile(ctx, env, req, 'billing', finalBilling);
 
     return json({ message: 'Billing address saved', next_step: 'delivery' }, 200, req);
   });
@@ -109,85 +182,49 @@ export async function checkoutBillingAddress(req, env, ctx) {
 export async function checkoutDelivery(req, env, ctx) {
   return withSpan(ctx, 'checkout.delivery', { 'user.id': req.userId }, async (span) => {
     const { userId } = req;
-    if (!userId) return json({ error: 'Unauthorized' }, 401, req);
-
     const body = await safeJson(req);
     const { delivery_type } = body;
 
-    if (!delivery_type) {
-      return json({ error: 'Delivery type is required' }, 400, req);
-    }
+    if (!delivery_type) return json({ error: 'Delivery type is required' }, 400, req);
 
-    const sessionId = getCookie(req, 'session_id');
-    if (!sessionId) return json({ error: 'Session ID missing' }, 401, req);
-    const sessionRaw = await env.SESSION_KV.get(sessionId);
-    if (!sessionRaw) return json({ error: 'Session expired' }, 401, req);
-    
-    const session = JSON.parse(sessionRaw);
-    if (session.checkout?.step !== 'BILLING_ADDRESS_COMPLETED') {
-      return json({ error: 'Please complete billing address step first' }, 400, req);
-    }
+    const checkout = await getActiveCheckout(env, userId);
+    if (!checkout) return json({ error: 'Session expired or not found' }, 404, req);
 
-    // Fetch the latest cart total and items to validate delivery options
-    const cart = await env.DB.prepare('SELECT total_price, currency FROM carts WHERE id = ? AND user_id = ? AND status = ?')
-      .bind(session.checkout.cart_id, userId, 'active')
-      .first();
+    // Validate delivery type against DB products since snapshot doesn't have options
+    const dbItems = await env.DB.prepare(`
+      SELECT p.name, p.delivery_options 
+      FROM cart_items ci
+      JOIN products p ON ci.product_id = p.id
+      WHERE ci.cart_id = ?
+    `).bind(checkout.cart_id).all();
 
-    if (!cart) return json({ error: 'Cart not found' }, 404, req);
-
-    // Validate delivery type against all products in the cart
-    const items = await env.DB.prepare(`
-      SELECT p.delivery_options, p.name 
-      FROM cart_items ci 
-      JOIN products p ON ci.product_id = p.id 
-      WHERE ci.cart_id = ? AND ci.status = ?
-    `).bind(session.checkout.cart_id, 'active').all();
-
-    for (const item of items.results) {
-      let options = [];
+    for (const item of dbItems.results) {
+      let options = ['NORMAL'];
       try {
-        options = JSON.parse(item.delivery_options || '["NORMAL"]');
-      } catch {
-        options = ["NORMAL"];
-      }
-
+        if (item.delivery_options) options = JSON.parse(item.delivery_options);
+      } catch (e) {}
+      
       if (!options.includes(delivery_type)) {
-        return json({ 
-          error: `Delivery method '${delivery_type}' is not available for product: ${item.name}` 
-        }, 400, req);
+        return json({ error: `Delivery method '${delivery_type}' is not available for product: ${item.name}` }, 400, req);
       }
     }
 
     const delivery = DELIVERY_PRICING[delivery_type];
-    if (!delivery) {
-      return json({ error: 'Invalid delivery type' }, 400, req);
-    }
-    const shippingCost = delivery.cost;
+    if (!delivery) return json({ error: 'Invalid delivery type' }, 400, req);
 
-    const taxRate = session.checkout.shipping_address.state?.toUpperCase() === 'TN' ? 0.05 : 0.12;
-    const subtotal = cart.total_price; 
+    const shippingCost = delivery.cost;
+    const shippingAddr = JSON.parse(checkout.shipping_address);
+    const taxRate = shippingAddr.state?.toUpperCase() === 'TN' ? 0.05 : 0.12;
+    
+    const subtotal = checkout.subtotal;
     const taxAmount = Math.round(subtotal * taxRate);
     const total = subtotal + taxAmount + shippingCost;
 
-    // Update session with billing info
-    session.checkout = {
-      ...session.checkout,
-      delivery_type,
-      shipping_cost: shippingCost,
-      tax_amount: taxAmount,
-      total_price: total,
-      currency: cart.currency,
-      step: 'BILLING_COMPLETED'
-    };
-    setAttributes(span, {
-      'checkout.subtotal': subtotal,
-      'checkout.shipping': shippingCost,
-      'checkout.tax': taxAmount,
-      'checkout.total': total,
-      'checkout.delivery_type': delivery_type
-    });
-
-    await env.SESSION_KV.put(sessionId, JSON.stringify(session));
+    await env.DB.prepare(`
+      UPDATE checkout_snapshot 
+      SET delivery_type = ?, shipping = ?, tax = ?, total = ?
+      WHERE id = ?
+    `).bind(delivery_type, shippingCost, taxAmount, total, checkout.id).run();
 
     return json({ 
       message: 'Billing details updated', 
@@ -195,10 +232,21 @@ export async function checkoutDelivery(req, env, ctx) {
         subtotal,
         shipping: shippingCost,
         tax: taxAmount,
-        total: session.checkout.total_price,
-        currency: cart.currency
+        total
       },
       next_step: 'payment' 
     }, 200, req);
+  });
+}
+
+export async function checkoutCancel(req, env, ctx) {
+  return withSpan(ctx, 'checkout.cancel_route', { 'user.id': req.userId }, async (span) => {
+    const checkout = await getActiveCheckout(env, req.userId);
+    
+    if (!checkout) return json({ message: 'No active session' }, 200, req);
+
+    await cancelCheckout(env, checkout.id, ctx);
+
+    return json({ message: 'Checkout cancelled, cart unlocked' }, 200, req);
   });
 }

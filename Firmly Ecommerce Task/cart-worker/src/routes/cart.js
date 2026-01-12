@@ -59,12 +59,20 @@ async function getOrCreateActiveCart(env, userId) {
 
   const res = await env.DB.prepare(`
     INSERT INTO carts (user_id, status, currency)
-    VALUES (?, 'active', ?)
+    SELECT ?1, 'active', ?2
+    WHERE NOT EXISTS (
+      SELECT 1 FROM carts WHERE user_id = ?1 AND status = 'active'
+    )
   `)
     .bind(userId, DEFAULT_CURRENCY)
     .run();
 
-  return res.meta.last_row_id;
+  if ((res.meta?.changes ?? res.changes) > 0) {
+    return res.meta?.last_row_id ?? res.lastRowId;
+  }
+
+  const existing = await getActiveCart(env, userId);
+  return existing.id;
 }
 
 async function fetchProduct(env, productId) {
