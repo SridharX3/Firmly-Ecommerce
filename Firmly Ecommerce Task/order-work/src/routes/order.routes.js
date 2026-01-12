@@ -3,8 +3,6 @@ import { withSpan, setAttributes } from '../observability/otel.js';
 
 export async function getAllOrders(req, env, ctx) {
   return withSpan(ctx, 'order.get_all', { 'user.id': req.userId }, async (span) => {
-    if (!req.userId) return json({ error: 'Unauthorized' }, 401, req);
-
     const { results } = await withSpan(ctx, 'db.get_all_orders', { 'user.id': req.userId }, () =>
       env.DB
         .prepare('SELECT * FROM orders WHERE user_id = ?')
@@ -55,8 +53,6 @@ export async function getAllOrders(req, env, ctx) {
 
 export async function getOrder(req, env, ctx) {
   return withSpan(ctx, 'order.get_one', { 'user.id': req.userId, 'order.id': req.params.orderId }, async (span) => {
-    if (!req.userId) return json({ error: 'Unauthorized' }, 401, req);
-
     const order = await withSpan(ctx, 'db.get_order', { 'order.id': req.params.orderId }, () =>
       env.DB
         .prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?')

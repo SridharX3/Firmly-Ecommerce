@@ -29,11 +29,9 @@
       {/if}
     </a>
 
-    {#if $session.user}
-      <a href="/order" class="text-sm hover:underline">
-        Orders
-      </a>
-    {/if}
+    <a href="/order" class="text-sm hover:underline">
+      Orders
+    </a>
   </div>
 
   {#if !$session.loading}

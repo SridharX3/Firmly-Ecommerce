@@ -65,7 +65,7 @@ export async function createCheckout(env, userId, payload, ctx) {
 
     const { results: items } = await withSpan(ctx, 'db.get.cart_items', { 'cart.id': cart.id }, () =>
       env.DB.prepare(
-        `SELECT product_id, quantity, snapshot_price, snapshot_name FROM cart_items WHERE cart_id = ? AND status = 'active'`
+        `SELECT product_id, quantity, snapshot_price, snapshot_name, image_url, status FROM cart_items WHERE cart_id = ? AND status = 'active'`
       )
         .bind(cart.id)
         .all()
@@ -83,7 +83,8 @@ export async function createCheckout(env, userId, payload, ctx) {
         product_id: i.product_id,
         name: i.snapshot_name,
         price: i.snapshot_price,
-        quantity: i.quantity
+        quantity: i.quantity,
+        status: i.status
       });
     }
 
@@ -96,7 +97,7 @@ export async function createCheckout(env, userId, payload, ctx) {
     await withSpan(ctx, 'db.insert.checkout', { 'checkout.id': checkoutId, 'cart.id': cart.id }, () =>
       env.DB.batch([
         env.DB.prepare(
-          `INSERT INTO checkout_sessions (id, user_id, cart_id, cart_snapshot, subtotal, tax, shipping, total, currency, status, shipping_address, billing_address, delivery_type, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'CREATED', ?, ?, ?, datetime('now', '+${CHECKOUT_TTL_MINUTES} minutes'))`
+          `INSERT INTO checkout_snapshot (id, user_id, cart_id, cart_snapshot, subtotal, tax, shipping, total, status, shipping_address, billing_address, delivery_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CREATED', ?, ?, ?)`
         ).bind(
           checkoutId,
           userId,
@@ -106,14 +107,13 @@ export async function createCheckout(env, userId, payload, ctx) {
           tax,
           shipping,
           total,
-          CURRENCY,
           JSON.stringify(shipping_address),
           JSON.stringify(billing_address || shipping_address),
           delivery_type
         ),
 
         env.DB.prepare(
-          `UPDATE carts SET status = 'locked' WHERE id = ?`
+          `UPDATE carts SET status = 'CHECKOUT_LOCKED' WHERE id = ?`
         ).bind(cart.id),
       ])
     );
@@ -134,9 +134,9 @@ export async function createCheckout(env, userId, payload, ctx) {
 export async function cancelCheckout(env, checkoutId, ctx) {
   return withSpan(ctx, 'checkout.cancel', { 'checkout.id': checkoutId }, async (span) => {
     // 1. Find the checkout session to identify the locked cart
-    const session = await withSpan(ctx, 'db.get.checkout_session', { 'checkout.id': checkoutId }, () =>
+    const session = await withSpan(ctx, 'db.get.checkout_snapshot', { 'checkout.id': checkoutId }, () =>
       env.DB.prepare(
-        `SELECT cart_id, status FROM checkout_sessions WHERE id = ?`
+        `SELECT cart_id, status FROM checkout_snapshot WHERE id = ?`
       )
         .bind(checkoutId)
         .first()
@@ -149,17 +149,17 @@ export async function cancelCheckout(env, checkoutId, ctx) {
 
     // 2. Only cancel if it hasn't been completed yet
     if (session.status !== 'CREATED') {
-      return { status: session.status, message: 'Checkout cannot be canceled' };
+      return { status: session.status, message: 'Checkout cannot be canceled', cart_id: session.cart_id };
     }
 
     // 3. Unlock the cart and mark checkout as canceled
-    await withSpan(ctx, 'db.cancel.checkout_session', { 'checkout.id': checkoutId, 'cart.id': session.cart_id }, () =>
+    await withSpan(ctx, 'db.cancel.checkout_snapshot', { 'checkout.id': checkoutId, 'cart.id': session.cart_id }, () =>
       env.DB.batch([
         env.DB.prepare(
-          `UPDATE carts SET status = 'active' WHERE id = ?`
+          `UPDATE carts SET status = 'ACTIVE' WHERE id = ?`
         ).bind(session.cart_id),
         env.DB.prepare(
-          `UPDATE checkout_sessions SET status = 'CANCELED' WHERE id = ?`
+          `UPDATE checkout_snapshot SET status = 'CANCELED' WHERE id = ?`
         ).bind(checkoutId),
       ])
     );

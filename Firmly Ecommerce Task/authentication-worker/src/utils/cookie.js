@@ -15,13 +15,13 @@ export function getCookie(request, name) {
   return null;
 }
 
-export function setSessionCookie(sessionId) {
-  if (!sessionId) {
-    throw new Error('Cannot set session cookie: sessionId is missing');
+export function setAuthCookie(token) {
+  if (!token) {
+    throw new Error('Cannot set auth cookie: token is missing');
   }
 
   return [
-    `session_id=${encodeURIComponent(sessionId)}`,
+    `auth_token=${token}`,
     'Path=/',
     'HttpOnly',
     'Secure',
@@ -30,9 +30,9 @@ export function setSessionCookie(sessionId) {
   ].join('; ');
 }
 
-export function clearSessionCookie() {
+export function clearAuthCookie() {
   return [
-    'session_id=',
+    'auth_token=',
     'Path=/',
     'HttpOnly',
     'Secure',

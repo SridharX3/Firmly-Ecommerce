@@ -88,7 +88,10 @@ router.get('/products/:id', async (request, env, ctx) => {
 
   const user = await getAuthUser(request, env);
 
-  const product = await service.getById(env.DB, id, { role: user?.role }, ctx);
+  const url = new URL(request.url);
+  const quantity = parseInt(url.searchParams.get('quantity') || '0', 10);
+
+  const product = await service.getById(env.DB, id, { role: user?.role, quantity }, ctx);
 
   return product
     ? json(product, 200, request)

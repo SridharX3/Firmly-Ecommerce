@@ -28,5 +28,8 @@
       "database_name": "new-ecom-db",
       "database_id": "888aa4e6-63a7-4c09-83b2-ef85cbaa1131"
     }
-  ]
+  ],
+  "vars": {
+    "PRODUCT_SERVICE_URL": "https://products-worker.sridhar-89c.workers.dev"
+  }
 }

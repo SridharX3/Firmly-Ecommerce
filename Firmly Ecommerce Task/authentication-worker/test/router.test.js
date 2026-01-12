@@ -5,19 +5,18 @@ jest.unstable_mockModule('../src/services/auth.service.js', () => ({
   login: jest.fn(),
 }));
 
-jest.unstable_mockModule('../src/services/session.service.js', () => ({
-  createSession: jest.fn(),
-  deleteSession: jest.fn(),
+jest.unstable_mockModule('../src/utils/jwt.js', () => ({
+  signToken: jest.fn(),
 }));
 
 jest.unstable_mockModule('../src/utils/cookie.js', () => ({
-  setSessionCookie: jest.fn(),
-  clearSessionCookie: jest.fn(),
+  setAuthCookie: jest.fn(),
+  clearAuthCookie: jest.fn(),
   getCookie: jest.fn(),
 }));
 
 const authService = await import('../src/services/auth.service.js');
-const sessionService = await import('../src/services/session.service.js');
+const jwt = await import('../src/utils/jwt.js');
 const cookie = await import('../src/utils/cookie.js');
 const { default: router } = await import('../src/router.js');
 
@@ -32,7 +31,7 @@ describe('Router', () => {
   });
 
   describe('POST /auth/register', () => {
-    it('should register a user and return a session cookie', async () => {
+    it('should register a user and return an auth cookie', async () => {
       const request = {
         method: 'POST',
         url: 'https://test.com/auth/register',
@@ -48,20 +47,20 @@ describe('Router', () => {
       const ctx = {};
 
       const user = { id: 1, email: 'test@example.com' };
-      const sessionId = 'some-session-id';
+      const token = 'mock-jwt-token';
 
       authService.register.mockResolvedValue(user);
-      sessionService.createSession.mockResolvedValue(sessionId);
-      cookie.setSessionCookie.mockReturnValue(`session_id=${sessionId}`);
+      jwt.signToken.mockResolvedValue(token);
+      cookie.setAuthCookie.mockReturnValue(`auth_token=${token}`);
 
       const response = await router.handle(request, env, ctx);
       const body = await response.json();
 
       expect(response.status).toBe(201);
       expect(body.email).toBe(user.email);
-      expect(response.headers.get('Set-Cookie')).toBe(`session_id=${sessionId}`);
+      expect(response.headers.get('Set-Cookie')).toBe(`auth_token=${token}`);
       expect(authService.register).toHaveBeenCalledTimes(1);
-      expect(sessionService.createSession).toHaveBeenCalledTimes(1);
+      expect(jwt.signToken).toHaveBeenCalledTimes(1);
     });
 
     it('should handle registration failure', async () => {
@@ -91,7 +90,7 @@ describe('Router', () => {
   });
 
   describe('POST /auth/login', () => {
-    it('should login a user and return a session cookie', async () => {
+    it('should login a user and return an auth cookie', async () => {
       const request = {
         method: 'POST',
         url: 'https://test.com/auth/login',
@@ -107,20 +106,20 @@ describe('Router', () => {
       const ctx = {};
 
       const user = { id: 1, email: 'test@example.com' };
-      const sessionId = 'some-session-id';
+      const token = 'mock-jwt-token';
 
       authService.login.mockResolvedValue(user);
-      sessionService.createSession.mockResolvedValue(sessionId);
-      cookie.setSessionCookie.mockReturnValue(`session_id=${sessionId}`);
+      jwt.signToken.mockResolvedValue(token);
+      cookie.setAuthCookie.mockReturnValue(`auth_token=${token}`);
 
       const response = await router.handle(request, env, ctx);
       const body = await response.json();
 
       expect(response.status).toBe(200);
       expect(body.email).toBe(user.email);
-      expect(response.headers.get('Set-Cookie')).toBe(`session_id=${sessionId}`);
+      expect(response.headers.get('Set-Cookie')).toBe(`auth_token=${token}`);
       expect(authService.login).toHaveBeenCalledTimes(1);
-      expect(sessionService.createSession).toHaveBeenCalledTimes(1);
+      expect(jwt.signToken).toHaveBeenCalledTimes(1);
     });
 
     it('should handle login failure', async () => {
@@ -150,28 +149,26 @@ describe('Router', () => {
   });
 
   describe('POST /auth/logout', () => {
-    it('should logout a user and clear the session cookie', async () => {
+    it('should logout a user and clear the auth cookie', async () => {
       const request = {
         method: 'POST',
         url: 'https://test.com/auth/logout',
         headers: {
-          get: (key) => key.toLowerCase() === 'cookie' ? 'session_id=some-session-id' : null,
+          get: (key) => key.toLowerCase() === 'cookie' ? 'auth_token=some-token' : null,
         },
       };
       const env = { DB: {} };
       const ctx = {};
 
-      cookie.getCookie.mockReturnValue('some-session-id');
-      sessionService.deleteSession.mockResolvedValue(undefined);
-      cookie.clearSessionCookie.mockReturnValue('session_id=; Max-Age=0; Path=/');
+      cookie.clearAuthCookie.mockReturnValue('auth_token=; Max-Age=0; Path=/');
 
       const response = await router.handle(request, env, ctx);
       const body = await response.json();
 
       expect(response.status).toBe(200);
       expect(body.success).toBe(true);
-      expect(response.headers.get('Set-Cookie')).toBe('session_id=; Max-Age=0; Path=/');
-      expect(sessionService.deleteSession).toHaveBeenCalledTimes(1);
+      expect(response.headers.get('Set-Cookie')).toBe('auth_token=; Max-Age=0; Path=/');
+      expect(cookie.clearAuthCookie).toHaveBeenCalledTimes(1);
     });
   });
 

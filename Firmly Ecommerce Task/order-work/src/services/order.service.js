@@ -37,7 +37,9 @@ const createOrderSchema = Joi.object({
     product_id: Joi.number().required(),
     name: Joi.string().required(),
     price: Joi.number().required(),
-    quantity: Joi.number().required()
+    quantity: Joi.number().required(),
+    image_url: Joi.string().optional().allow(null),
+    status: Joi.string().optional()
   })).required()
 });
 
@@ -143,54 +145,97 @@ export async function createOrder(
  */
 export async function createOrderTransaction(
   env,
-  { user_id, status, total_amount, currency, payment_provider, payment_reference, cart_id, shipping_address, billing_address, delivery_mode },
+  { checkout_id, payment_reference, payment_provider },
   ctx
 ) {
   return withSpan(
     ctx,
     'order.transaction.create',
-    { 'user.id': user_id, 'cart.id': cart_id },
+    { 'checkout.id': checkout_id },
     async (span) => {
-      // 1. Fetch Cart Items for ordered_items
-      const { results: cartItems } = await withSpan(ctx, 'db.get.cart_items', { 'cart.id': cart_id }, () =>
+      // 1. Fetch Checkout Session (Source of Truth)
+      const session = await withSpan(ctx, 'db.get.checkout_session', { 'checkout.id': checkout_id }, () =>
         env.DB.prepare(
-          `SELECT product_id, snapshot_name as name, snapshot_price as price, quantity FROM cart_items WHERE cart_id = ? AND status = 'active'`
+          `SELECT * FROM checkout_snapshot WHERE id = ?`
         )
-          .bind(cart_id)
-          .all()
+          .bind(checkout_id)
+          .first()
       );
 
-      const ordered_items = cartItems;
+      if (!session) throw new Error('Checkout session not found');
+      if (session.status !== 'CREATED') throw new Error('Checkout session invalid or already processed');
+
+      const ordered_items = JSON.parse(session.cart_snapshot);
+      const shipping_address = JSON.parse(session.shipping_address);
+      const billing_address = session.billing_address ? JSON.parse(session.billing_address) : shipping_address;
+
+      const orderData = {
+        user_id: session.user_id,
+        status: 'PAID',
+        total_amount: session.total,
+        currency: session.currency || 'USD',
+        payment_provider,
+        payment_reference,
+        cart_id: session.cart_id,
+        shipping_address,
+        billing_address,
+        delivery_mode: session.delivery_type,
+        ordered_items
+      };
 
       const { error } = createOrderSchema.validate(
-        { user_id, status, total_amount, currency, payment_provider, payment_reference, cart_id, shipping_address, billing_address, delivery_mode, ordered_items },
-        { abortEarly: false }
+        orderData,
+        { abortEarly: false, stripUnknown: true }
       );
+      if (error) throw new Error(`Invalid order data: ${error.message}`);
 
+      // 2. Prepare Batch Operations
       const insertOrder = env.DB.prepare(`
         INSERT INTO orders (user_id, status, total_amount, currency, payment_provider, payment_reference, shipping_address, billing_address, delivery_mode, ordered_items, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         RETURNING id
       `).bind(
-        Number(user_id),
-        status,
-        total_amount,
-        currency,
-        payment_provider,
-        payment_reference,
-        JSON.stringify(shipping_address),
-        JSON.stringify(billing_address),
-        delivery_mode,
-        JSON.stringify(ordered_items)
+        Number(orderData.user_id),
+        orderData.status,
+        orderData.total_amount,
+        orderData.currency,
+        orderData.payment_provider,
+        orderData.payment_reference,
+        JSON.stringify(orderData.shipping_address),
+        JSON.stringify(orderData.billing_address),
+        orderData.delivery_mode,
+        JSON.stringify(orderData.ordered_items)
       );
 
-      const closeCart = env.DB.prepare(`
+      const markCartOrdered = env.DB.prepare(`
         UPDATE carts SET status = 'completed', updated_at = datetime('now')
         WHERE id = ?
-      `).bind(cart_id);
+      `).bind(session.cart_id);
 
-      const results = await withSpan(ctx, 'db.transaction.create_order', { 'cart.id': cart_id }, () =>
-        env.DB.batch([insertOrder, closeCart])
+      const markItemsOrdered = env.DB.prepare(`
+        UPDATE cart_items SET status = 'completed'
+        WHERE cart_id = ?
+      `).bind(session.cart_id);
+
+      const createNewCart = env.DB.prepare(`
+        INSERT INTO carts (user_id, status, created_at)
+        SELECT ?, 'active', datetime('now')
+        WHERE NOT EXISTS (SELECT 1 FROM carts WHERE user_id = ? AND status = 'active')
+      `).bind(session.user_id, session.user_id);
+
+      const completeSession = env.DB.prepare(`
+        UPDATE checkout_snapshot SET status = 'COMPLETED' WHERE id = ?
+      `).bind(checkout_id);
+
+      // 3. Execute Transaction
+      const results = await withSpan(ctx, 'db.transaction.create_order', { 'cart.id': session.cart_id }, () =>
+        env.DB.batch([
+          insertOrder,
+          markCartOrdered,
+          markItemsOrdered,
+          createNewCart,
+          completeSession
+        ])
       );
 
       const success = results.every(r => r.success);

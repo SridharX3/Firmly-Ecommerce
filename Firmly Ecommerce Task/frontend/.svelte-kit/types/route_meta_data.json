@@ -1,0 +1,23 @@
+{
+	"/": [
+		"src/routes/+page.js"
+	],
+	"/api/ws": [
+		"src/routes/api/ws/+server.js"
+	],
+	"/cart": [],
+	"/checkout": [],
+	"/login": [],
+	"/order": [
+		"src/routes/order/+page.js"
+	],
+	"/order/success": [],
+	"/order/[checkout_id]": [
+		"src/routes/order/[checkout_id]/+page.js"
+	],
+	"/products": [],
+	"/products/[id]": [
+		"src/routes/products/[id]/+page.js"
+	],
+	"/register": []
+}

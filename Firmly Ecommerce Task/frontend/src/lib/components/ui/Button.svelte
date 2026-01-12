@@ -1,16 +1,16 @@
-<script lang="ts">
-  export let href: string | undefined = undefined;
-  export let ui_button_styles: string = '';
+<script>
+  export let href = undefined;
+  export let ui_button_styles = '';
 
   // Forward all other props to the underlying element
-  let restProps: Record<string, any> = {};
+  let restProps = {};
   $: ({ href, ui_button_styles, ...restProps } = $$props);
 
   // Forward all events
   import { createEventDispatcher } from 'svelte';
   const dispatch = createEventDispatcher();
 
-  function handleClick(event: MouseEvent) {
+  function handleClick(event) {
     dispatch('click', event);
   }
 </script>

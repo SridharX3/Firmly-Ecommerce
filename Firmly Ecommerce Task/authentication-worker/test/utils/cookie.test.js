@@ -1,6 +1,6 @@
 
 import { expect } from 'chai';
-import { getCookie, setSessionCookie, clearSessionCookie } from '../../src/utils/cookie.js';
+import { getCookie, setAuthCookie, clearAuthCookie } from '../../src/utils/cookie.js';
 
 describe('Cookie Utils', () => {
   describe('getCookie', () => {
@@ -36,17 +36,17 @@ describe('Cookie Utils', () => {
       });
   });
 
-  describe('setSessionCookie', () => {
-    it('should throw an error if sessionId is missing', () => {
-      expect(() => setSessionCookie(null)).to.throw('Cannot set session cookie: sessionId is missing');
+  describe('setAuthCookie', () => {
+    it('should throw an error if token is missing', () => {
+      expect(() => setAuthCookie(null)).to.throw('Cannot set auth cookie: token is missing');
     });
 
-    it('should return a correctly formatted session cookie string', () => {
-      const sessionId = 'test-session-id';
-      const cookie = setSessionCookie(sessionId);
+    it('should return a correctly formatted auth cookie string', () => {
+      const token = 'test-auth-token';
+      const cookie = setAuthCookie(token);
       const parts = cookie.split('; ').sort();
       const expectedParts = [
-        `session_id=${encodeURIComponent(sessionId)}`,
+        `auth_token=${token}`,
         'Path=/',
         'HttpOnly',
         'Secure',
@@ -58,12 +58,12 @@ describe('Cookie Utils', () => {
     });
   });
 
-  describe('clearSessionCookie', () => {
+  describe('clearAuthCookie', () => {
     it('should return a correctly formatted clear cookie string', () => {
-      const cookie = clearSessionCookie();
+      const cookie = clearAuthCookie();
       const parts = cookie.split('; ').sort();
       const expectedParts = [
-        'session_id=',
+        'auth_token=',
         'Path=/',
         'HttpOnly',
         'Secure',

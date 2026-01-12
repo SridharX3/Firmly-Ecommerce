@@ -37,7 +37,8 @@
   ],
 
   "vars": {
-    "PAYPAL_API": "https://api-m.sandbox.paypal.com"
+    "PAYPAL_API": "https://api-m.sandbox.paypal.com",
+    "AUTH_WORKER_URL": "https://auth-worker.sridhar-89c.workers.dev"
   }
 
 }

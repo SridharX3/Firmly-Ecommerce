@@ -4,6 +4,8 @@
   import { capturePayPalPayment } from '$lib/api/payment';
   import { apiFetch } from '$lib/api/client';
   import { ORDER_API } from '$lib/api/endpoints';
+  import { goto } from '$app/navigation';
+  import { checkout } from '$lib/stores/checkout';
 
   let status = 'processing';
   let error = null;
@@ -33,11 +35,20 @@
         order = orderRes;
       }
 
+      // Clear checkout state on successful order
+      checkout.set({
+        loading: false,
+        error: null,
+        step: 'shipping',
+        summary: null,
+        checkoutId: null,
+        savedShippingAddresses: [],
+        savedBillingAddresses: []
+      });
       status = 'success';
     } catch (e) {
       console.error(e);
-      error = e.message || 'Payment failed';
-      status = 'failed';
+      goto('/order');
     }
   });
 
