@@ -36,7 +36,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           projectName: 'my-app-name' # <--- UPDATE THIS with your Cloudflare project name
           directory: 'dist'          # <--- UPDATE THIS with your build output folder
-          gitHubToken: ${{ secrets.GIT_TOKEN }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
       # Slack Notification (Success)
       - name: Slack Notification - Success
